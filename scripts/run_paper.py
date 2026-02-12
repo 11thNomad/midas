@@ -22,6 +22,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from src.data.free_feed import DataUnavailableError, FreeFeed
 from src.data.store import DataStore
+from src.execution import PaperExecutionEngine
 from src.regime import (
     RegimeClassifier,
     RegimeRuntime,
@@ -167,6 +168,13 @@ def main() -> int:
         transition_store=StrategyTransitionStore(base_dir=str(cache_dir)),
         symbol=args.symbol,
     )
+    backtest_cfg = settings.get("backtest", {})
+    slippage_pct = float(backtest_cfg.get("slippage_pct", 0.05) or 0.05)
+    executor = PaperExecutionEngine(
+        base_dir=str(cache_dir),
+        slippage_bps=slippage_pct * 100.0,
+        commission_per_order=float(backtest_cfg.get("commission_per_order", 20.0) or 20.0),
+    )
 
     print("=" * 72)
     print("NiftyQuant Paper Loop (No Execution)")
@@ -215,11 +223,17 @@ def main() -> int:
                 market_data={"timestamp": loop_ts, "candles": candles, "vix": vix_value},
                 regime=regime,
             )
+            all_signals = transition_signals + strategy_signals
+            fills = executor.execute_signals(
+                all_signals,
+                market_data={"timestamp": loop_ts, "vix": vix_value, "symbol": args.symbol},
+            )
 
             print(
                 f"[{i + 1}/{args.iterations}] regime={regime.value} "
                 f"vix={vix_value:.2f} adx={regime_signals.adx_14:.2f} "
-                f"transition_signals={len(transition_signals)} strategy_signals={len(strategy_signals)}"
+                f"transition_signals={len(transition_signals)} strategy_signals={len(strategy_signals)} "
+                f"fills={len(fills)}"
             )
         except DataUnavailableError as exc:
             print(f"[{i + 1}/{args.iterations}] data unavailable: {exc}")
