@@ -14,6 +14,13 @@ from typing import Any
 
 import pandas as pd
 
+from src.data.contracts import (
+    candle_dtos_from_frame,
+    fii_dtos_from_frame,
+    frame_from_candle_dtos,
+    frame_from_fii_dtos,
+    option_dtos_from_chain,
+)
 from src.data.feed import DataFeed
 from src.data.fii import fetch_fii_dii
 from src.data.schemas import InstrumentType, OptionChain, OptionContract, OptionGreeks
@@ -169,7 +176,15 @@ class TrueDataFeed(DataFeed):
                 continue
             try:
                 payload = method(symbol, start, end, interval)
-                return self._normalize_candles(payload)
+                normalized = self._normalize_candles(payload)
+                return frame_from_candle_dtos(
+                    candle_dtos_from_frame(
+                        normalized,
+                        source=self.name,
+                        symbol=symbol,
+                        timeframe=timeframe,
+                    )
+                )
             except TypeError:
                 # Alternate signature variant: keyword arguments.
                 try:
@@ -179,7 +194,15 @@ class TrueDataFeed(DataFeed):
                         end_time=end,
                         bar_size=interval,
                     )
-                    return self._normalize_candles(payload)
+                    normalized = self._normalize_candles(payload)
+                    return frame_from_candle_dtos(
+                        candle_dtos_from_frame(
+                            normalized,
+                            source=self.name,
+                            symbol=symbol,
+                            timeframe=timeframe,
+                        )
+                    )
                 except Exception as exc:
                     last_error = exc
             except Exception as exc:
@@ -277,13 +300,15 @@ class TrueDataFeed(DataFeed):
             # TODO: replace with explicit underlying snapshot from SDK.
             underlying_price = contracts[0].strike
 
-        return OptionChain(
+        chain = OptionChain(
             underlying=symbol,
             underlying_price=underlying_price,
             timestamp=timestamp or datetime.now(UTC).replace(tzinfo=None),
             expiry=expiry,
             contracts=contracts,
         )
+        option_dtos_from_chain(chain, source=self.name)
+        return chain
 
     def get_vix(self, start: datetime, end: datetime) -> pd.DataFrame:
         # TODO: confirm exact TrueData symbol alias for India VIX in your account.
@@ -298,4 +323,5 @@ class TrueDataFeed(DataFeed):
 
     def get_fii_data(self, start: datetime, end: datetime) -> pd.DataFrame:
         # TODO: if your TrueData plan includes FII/DII endpoints, wire them here.
-        return fetch_fii_dii(start=start, end=end)
+        data = fetch_fii_dii(start=start, end=end)
+        return frame_from_fii_dtos(fii_dtos_from_frame(data, source=self.name))

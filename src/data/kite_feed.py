@@ -9,6 +9,7 @@ from typing import Iterable
 import pandas as pd
 from kiteconnect import KiteConnect
 
+from src.data.contracts import candle_dtos_from_frame, frame_from_candle_dtos, option_dtos_from_chain
 from src.data.feed import DataFeed
 from src.data.schemas import InstrumentType, OptionChain, OptionContract
 
@@ -142,7 +143,15 @@ class KiteFeed(DataFeed):
             )
             all_rows.extend(rows)
 
-        return self._normalize_candles(all_rows)
+        data = self._normalize_candles(all_rows)
+        return frame_from_candle_dtos(
+            candle_dtos_from_frame(
+                data,
+                source=self.name,
+                symbol=symbol,
+                timeframe=timeframe,
+            )
+        )
 
     @staticmethod
     def _instrument_type(opt_type: str) -> InstrumentType:
@@ -216,13 +225,15 @@ class KiteFeed(DataFeed):
                 )
             )
 
-        return OptionChain(
+        chain = OptionChain(
             underlying=symbol,
             underlying_price=self._get_underlying_price(symbol),
             timestamp=timestamp or datetime.now(UTC).replace(tzinfo=None),
             expiry=expiry,
             contracts=contracts,
         )
+        option_dtos_from_chain(chain, source=self.name)
+        return chain
 
     def get_vix(self, start: datetime, end: datetime) -> pd.DataFrame:
         # Kite exposes India VIX as an index instrument.

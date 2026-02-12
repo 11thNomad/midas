@@ -1,6 +1,16 @@
 """Data layer exports."""
 
-from src.data.contracts import NormalizedCandleDTO, NormalizedFiiDiiDTO, NormalizedOptionRowDTO
+from src.data.contracts import (
+    DTOValidationError,
+    NormalizedCandleDTO,
+    NormalizedFiiDiiDTO,
+    NormalizedOptionRowDTO,
+    candle_dtos_from_frame,
+    fii_dtos_from_frame,
+    frame_from_candle_dtos,
+    frame_from_fii_dtos,
+    option_dtos_from_chain,
+)
 from src.data.feed import CandleRequest, DataFeed
 from src.data.fii import FiiDownloadError, NseFiiClient, fetch_fii_dii, load_or_fetch_fii_dii
 from src.data.free_feed import DataFeedError, DataUnavailableError, FreeFeed
@@ -23,6 +33,7 @@ __all__ = [
     "NormalizedCandleDTO",
     "NormalizedOptionRowDTO",
     "NormalizedFiiDiiDTO",
+    "DTOValidationError",
     "FiiDownloadError",
     "NseFiiClient",
     "DataFeedError",
@@ -40,4 +51,9 @@ __all__ = [
     "evaluate_quality_gate",
     "summarize_issue_count",
     "thresholds_from_config",
+    "candle_dtos_from_frame",
+    "frame_from_candle_dtos",
+    "option_dtos_from_chain",
+    "fii_dtos_from_frame",
+    "frame_from_fii_dtos",
 ]

@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from src.data.contracts import candle_dtos_from_frame, fii_dtos_from_frame, frame_from_candle_dtos, frame_from_fii_dtos
 from src.data.feed import DataFeed
 from src.data.fii import load_or_fetch_fii_dii
 from src.data.schemas import OptionChain
@@ -201,13 +202,28 @@ class FreeFeed(DataFeed):
             yf = self._load_yfinance()
             data = self._yf_download(yf, yf_symbol, interval, start, end)
             if not data.empty:
-                return data
+                return frame_from_candle_dtos(
+                    candle_dtos_from_frame(
+                        data,
+                        source=self.name,
+                        symbol=symbol,
+                        timeframe=timeframe,
+                    )
+                )
         except DataUnavailableError:
             # fall through to jugaad when possible
             pass
 
         if interval == "1d" and symbol.upper() not in self._YF_SYMBOL_MAP:
-            return self._jugaad_daily(symbol, start, end)
+            data = self._jugaad_daily(symbol, start, end)
+            return frame_from_candle_dtos(
+                candle_dtos_from_frame(
+                    data,
+                    source=self.name,
+                    symbol=symbol,
+                    timeframe=timeframe,
+                )
+            )
 
         raise DataUnavailableError(
             f"No free candle source available for symbol={symbol}, timeframe={timeframe}."
@@ -229,7 +245,14 @@ class FreeFeed(DataFeed):
         data = self._yf_download(yf, self._normalize_symbol("INDIAVIX"), "1d", start, end)
         if data.empty:
             raise DataUnavailableError("Unable to fetch India VIX from free source.")
-        return data
+        return frame_from_candle_dtos(
+            candle_dtos_from_frame(
+                data,
+                source=self.name,
+                symbol="INDIAVIX",
+                timeframe="1d",
+            )
+        )
 
     def get_fii_data(self, start: datetime, end: datetime) -> pd.DataFrame:
         fii_path = Path(self.data_root) / "raw" / "fii_dii.csv"
@@ -240,4 +263,5 @@ class FreeFeed(DataFeed):
 
         out = out.dropna(subset=["date"]).sort_values("date")
         mask = (out["date"] >= pd.Timestamp(start)) & (out["date"] <= pd.Timestamp(end))
-        return out.loc[mask].reset_index(drop=True)
+        filtered = out.loc[mask].reset_index(drop=True)
+        return frame_from_fii_dtos(fii_dtos_from_frame(filtered, source=self.name))
