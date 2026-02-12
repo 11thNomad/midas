@@ -47,6 +47,7 @@
 ### Immediate TODOs (Added)
 - [ ] Replace `NoOpStrategy` in `scripts/run_paper.py` with real strategy classes as they are implemented.
 - [ ] Add `paper_fills` daily P&L/reporting script (fills, fees, gross/net by day/strategy).
+- [ ] **Visual review step:** run replay notebook/report and manually verify regime labels vs chart context before strategy comparisons.
 
 ### Required To Proceed To Phase 4
 - [x] Add/confirm hysteresis + smoothing behavior tests in classifier to reduce flip-flops in transition zone.
