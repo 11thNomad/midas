@@ -2,7 +2,7 @@
 
 from src.backtest.engine import BacktestEngine, BacktestResult
 from src.backtest.metrics import summarize_backtest
-from src.backtest.report import write_backtest_report
+from src.backtest.report import write_backtest_report, write_walkforward_report
 from src.backtest.simulator import FillSimulator
 from src.backtest.walkforward import aggregate_walk_forward_metrics, generate_walk_forward_windows, WalkForwardWindow
 
@@ -15,4 +15,5 @@ __all__ = [
     "aggregate_walk_forward_metrics",
     "summarize_backtest",
     "write_backtest_report",
+    "write_walkforward_report",
 ]

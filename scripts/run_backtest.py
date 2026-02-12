@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -20,9 +19,11 @@ from src.backtest import (
     aggregate_walk_forward_metrics,
     generate_walk_forward_windows,
     write_backtest_report,
+    write_walkforward_report,
 )
 from src.data.store import DataStore
 from src.regime.classifier import RegimeClassifier, RegimeThresholds
+from src.strategies.momentum import MomentumStrategy
 from src.strategies.regime_probe import RegimeProbeStrategy
 
 
@@ -40,7 +41,7 @@ def parse_args() -> argparse.Namespace:
         "--strategy",
         action="append",
         dest="strategies",
-        help="Strategy id; repeatable or comma-separated (currently: regime_probe)",
+        help="Strategy id; repeatable or comma-separated (available: regime_probe, momentum)",
     )
     parser.add_argument("--walk-forward", action="store_true", help="Run walk-forward windows instead of single run")
     parser.add_argument("--settings", default="config/settings.yaml", help="Settings file path")
@@ -65,13 +66,18 @@ def resolve_strategies(values: list[str] | None) -> list[str]:
 
 
 def build_strategy(strategy_id: str, *, settings: dict, symbol: str):
-    if strategy_id != "regime_probe":
-        raise ValueError(f"Unsupported strategy '{strategy_id}'. Available: regime_probe")
     strategy_cfg = settings.get("strategies", {}).get("momentum", {})
-    strategy_cfg = {**strategy_cfg, "instrument": symbol, "lots": strategy_cfg.get("max_lots", 1)}
-    strategy = RegimeProbeStrategy(name=strategy_id, config=strategy_cfg)
-    capital = float(strategy_cfg.get("capital_per_trade", 200000) or 200000)
-    return strategy, capital
+    if strategy_id == "regime_probe":
+        probe_cfg = {**strategy_cfg, "instrument": symbol, "lots": strategy_cfg.get("max_lots", 1)}
+        strategy = RegimeProbeStrategy(name=strategy_id, config=probe_cfg)
+        capital = float(probe_cfg.get("capital_per_trade", 200000) or 200000)
+        return strategy, capital
+    if strategy_id == "momentum":
+        momentum_cfg = {**strategy_cfg, "instrument": symbol}
+        strategy = MomentumStrategy(name=strategy_id, config=momentum_cfg)
+        capital = float(momentum_cfg.get("capital_per_trade", 200000) or 200000)
+        return strategy, capital
+    raise ValueError(f"Unsupported strategy '{strategy_id}'. Available: regime_probe, momentum")
 
 
 def main() -> int:
@@ -156,22 +162,26 @@ def main() -> int:
                     "test_end": w.test_end.isoformat(),
                     **result.metrics,
                 }
+                if not result.regimes.empty:
+                    regime_counts = result.regimes["regime"].value_counts(normalize=True)
+                    row["dominant_regime"] = str(regime_counts.index[0])
+                    row["dominant_regime_share"] = float(regime_counts.iloc[0])
                 fold_rows.append(row)
 
             fold_df = pd.DataFrame(fold_rows)
             summary = aggregate_walk_forward_metrics(fold_rows)
             run_name = f"{strategy_id}_{args.symbol.lower()}_{args.timeframe}_{start.date()}_{end.date()}_walkforward"
-            csv_path = Path(output_dir) / f"{run_name}_folds.csv"
-            json_path = Path(output_dir) / f"{run_name}_summary.json"
-            Path(output_dir).mkdir(parents=True, exist_ok=True)
-            fold_df.to_csv(csv_path, index=False)
-
-            json_path.write_text(json.dumps(summary, indent=2, sort_keys=True))
+            paths = write_walkforward_report(
+                folds=fold_df,
+                summary=summary,
+                output_dir=output_dir,
+                run_name=run_name,
+            )
 
             print(f"\n[{strategy_id}] Walk-forward complete")
             print(f"  folds={len(fold_df)} return_mean={summary.get('total_return_pct_mean', 0.0):.2f}")
-            print(f"  folds_csv={csv_path}")
-            print(f"  summary_json={json_path}")
+            for k, p in paths.items():
+                print(f"  {k}: {p}")
         else:
             classifier = RegimeClassifier(thresholds=RegimeThresholds.from_config(settings.get("regime", {})))
             engine = BacktestEngine(

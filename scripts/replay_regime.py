@@ -19,8 +19,8 @@ from src.regime import (
     RegimeSnapshotStore,
     RegimeThresholds,
     StrategyTransitionStore,
-    replay_regimes_no_lookahead,
 )
+from src.regime.replay import replay_regimes_no_lookahead
 
 
 def parse_date(value: str) -> datetime:
