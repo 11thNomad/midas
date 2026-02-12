@@ -1,0 +1,43 @@
+# === Secrets — NEVER commit these ===
+.env
+*.pem
+*.key
+
+# === Data — too large for git ===
+data/cache/
+data/logs/
+data/reports/
+*.parquet
+*.h5
+
+# === Python ===
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+.venv/
+venv/
+
+# === IDE ===
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# === Jupyter ===
+.ipynb_checkpoints/
+*.ipynb_metadata/
+
+# === Testing ===
+.coverage
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+
+# === Database ===
+*.db
+*.sqlite3

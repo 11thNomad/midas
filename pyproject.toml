@@ -1,0 +1,84 @@
+[project]
+name = "nifty-quant"
+version = "0.1.0"
+description = "Algorithmic trading system for Indian markets (NSE) — Nifty & Bank Nifty options"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+
+dependencies = [
+    # === Data Layer ===
+    "jugaad-data>=0.25",        # Free NSE historical data
+    "openchart>=0.1",           # Free NSE intraday data
+    "yfinance>=0.2",            # Yahoo Finance fallback
+
+    # === Execution ===
+    "kiteconnect>=5.0",         # Zerodha Kite Connect API
+
+    # === Core Computation ===
+    "numpy>=1.26",
+    "pandas>=2.1",
+    "scipy>=1.11",
+    "ta>=0.11",                 # Technical analysis indicators (RSI, MACD, ADX, etc.)
+    "py_vollib>=1.0",           # Black-Scholes + Greeks computation
+    "mibian>=0.1",              # Options pricing (backup/validation)
+
+    # === Backtesting ===
+    "vectorbt>=0.26",           # Fast vectorized backtesting
+
+    # === Storage ===
+    "pyarrow>=14.0",            # Parquet file support (fast columnar storage)
+    "sqlalchemy>=2.0",          # Database ORM (SQLite for local, Postgres for VPS)
+
+    # === Configuration ===
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0",
+    "pydantic>=2.5",            # Settings validation + data models
+
+    # === Monitoring & Alerting ===
+    "structlog>=23.2",          # Structured JSON logging
+    "python-telegram-bot>=20",  # Telegram alerts
+    "streamlit>=1.29",          # Live monitoring dashboard
+
+    # === Scheduling ===
+    "apscheduler>=3.10",        # Job scheduling for market hours
+
+    # === HTTP ===
+    "httpx>=0.25",              # Async HTTP client (TrueData API calls)
+    "websockets>=12.0",         # WebSocket for real-time data streams
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+    "pytest-cov>=4.1",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.1",                # Linter + formatter
+    "mypy>=1.7",                # Type checking
+    "ipykernel>=6.27",          # Jupyter support
+    "jupyterlab>=4.0",
+    "matplotlib>=3.8",          # Plotting in notebooks
+    "seaborn>=0.13",
+]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
