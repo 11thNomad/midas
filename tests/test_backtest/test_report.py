@@ -28,6 +28,19 @@ def test_write_walkforward_report_creates_files(tmp_path):
         ]
     )
     summary = {"folds": 2.0, "total_return_pct_mean": 1.5}
-    paths = write_walkforward_report(folds=folds, summary=summary, output_dir=str(tmp_path), run_name="wf")
+    regime_table = pd.DataFrame(
+        [
+            {"regime": "low_vol_trending", "folds": 2, "bars": 100, "mean_bar_return_pct": 0.1, "cumulative_return_pct": 2.5}
+        ]
+    )
+    paths = write_walkforward_report(
+        folds=folds,
+        summary=summary,
+        regime_table=regime_table,
+        output_dir=str(tmp_path),
+        run_name="wf",
+    )
     for _, p in paths.items():
         assert Path(p).exists()
+    html = Path(paths["html_report"]).read_text()
+    assert "Regime-Segmented Returns" in html

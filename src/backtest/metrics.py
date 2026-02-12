@@ -59,3 +59,45 @@ def summarize_backtest(
         "fill_count": float(len(fills)),
         "fees_paid": fees_paid,
     }
+
+
+def regime_segmented_returns(equity_curve: pd.DataFrame, regimes: pd.DataFrame) -> pd.DataFrame:
+    """Compute return profile grouped by regime labels."""
+    required_eq = {"timestamp", "equity"}
+    required_reg = {"timestamp", "regime"}
+    if equity_curve.empty or regimes.empty:
+        return pd.DataFrame(columns=["regime", "bars", "mean_bar_return_pct", "cumulative_return_pct"])
+    if not required_eq.issubset(equity_curve.columns) or not required_reg.issubset(regimes.columns):
+        return pd.DataFrame(columns=["regime", "bars", "mean_bar_return_pct", "cumulative_return_pct"])
+
+    eq = equity_curve.copy()
+    eq["timestamp"] = pd.to_datetime(eq["timestamp"], errors="coerce")
+    eq["equity"] = pd.to_numeric(eq["equity"], errors="coerce")
+    eq = eq.dropna(subset=["timestamp", "equity"]).sort_values("timestamp")
+    if eq.empty:
+        return pd.DataFrame(columns=["regime", "bars", "mean_bar_return_pct", "cumulative_return_pct"])
+    eq["bar_return"] = eq["equity"].pct_change().fillna(0.0)
+
+    reg = regimes.copy()
+    reg["timestamp"] = pd.to_datetime(reg["timestamp"], errors="coerce")
+    reg = reg.dropna(subset=["timestamp"]).sort_values("timestamp")
+    if reg.empty:
+        return pd.DataFrame(columns=["regime", "bars", "mean_bar_return_pct", "cumulative_return_pct"])
+
+    merged = eq.merge(reg[["timestamp", "regime"]], on="timestamp", how="inner")
+    if merged.empty:
+        return pd.DataFrame(columns=["regime", "bars", "mean_bar_return_pct", "cumulative_return_pct"])
+
+    rows: list[dict] = []
+    for regime, grp in merged.groupby("regime"):
+        returns = grp["bar_return"].astype("float64")
+        cumulative = (returns + 1.0).prod() - 1.0
+        rows.append(
+            {
+                "regime": str(regime),
+                "bars": int(len(grp)),
+                "mean_bar_return_pct": float(returns.mean() * 100.0),
+                "cumulative_return_pct": float(cumulative * 100.0),
+            }
+        )
+    return pd.DataFrame(rows).sort_values("regime").reset_index(drop=True)

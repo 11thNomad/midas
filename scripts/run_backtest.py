@@ -18,11 +18,13 @@ from src.backtest import (
     FillSimulator,
     aggregate_walk_forward_metrics,
     generate_walk_forward_windows,
+    regime_segmented_returns,
     write_backtest_report,
     write_walkforward_report,
 )
 from src.data.store import DataStore
 from src.regime.classifier import RegimeClassifier, RegimeThresholds
+from src.strategies.iron_condor import IronCondorStrategy
 from src.strategies.momentum import MomentumStrategy
 from src.strategies.regime_probe import RegimeProbeStrategy
 
@@ -41,7 +43,7 @@ def parse_args() -> argparse.Namespace:
         "--strategy",
         action="append",
         dest="strategies",
-        help="Strategy id; repeatable or comma-separated (available: regime_probe, momentum)",
+        help="Strategy id; repeatable or comma-separated (available: regime_probe, momentum, iron_condor)",
     )
     parser.add_argument("--walk-forward", action="store_true", help="Run walk-forward windows instead of single run")
     parser.add_argument("--settings", default="config/settings.yaml", help="Settings file path")
@@ -66,18 +68,25 @@ def resolve_strategies(values: list[str] | None) -> list[str]:
 
 
 def build_strategy(strategy_id: str, *, settings: dict, symbol: str):
-    strategy_cfg = settings.get("strategies", {}).get("momentum", {})
     if strategy_id == "regime_probe":
-        probe_cfg = {**strategy_cfg, "instrument": symbol, "lots": strategy_cfg.get("max_lots", 1)}
+        base_cfg = settings.get("strategies", {}).get("momentum", {})
+        probe_cfg = {**base_cfg, "instrument": symbol, "lots": base_cfg.get("max_lots", 1)}
         strategy = RegimeProbeStrategy(name=strategy_id, config=probe_cfg)
         capital = float(probe_cfg.get("capital_per_trade", 200000) or 200000)
         return strategy, capital
     if strategy_id == "momentum":
-        momentum_cfg = {**strategy_cfg, "instrument": symbol}
+        base_cfg = settings.get("strategies", {}).get("momentum", {})
+        momentum_cfg = {**base_cfg, "instrument": symbol}
         strategy = MomentumStrategy(name=strategy_id, config=momentum_cfg)
         capital = float(momentum_cfg.get("capital_per_trade", 200000) or 200000)
         return strategy, capital
-    raise ValueError(f"Unsupported strategy '{strategy_id}'. Available: regime_probe, momentum")
+    if strategy_id == "iron_condor":
+        base_cfg = settings.get("strategies", {}).get("iron_condor", {})
+        ic_cfg = {**base_cfg, "instrument": symbol}
+        strategy = IronCondorStrategy(name=strategy_id, config=ic_cfg)
+        capital = float(ic_cfg.get("capital_per_trade", 100000) or 100000)
+        return strategy, capital
+    raise ValueError(f"Unsupported strategy '{strategy_id}'. Available: regime_probe, momentum, iron_condor")
 
 
 def main() -> int:
@@ -139,6 +148,7 @@ def main() -> int:
                 raise ValueError("No walk-forward windows were generated for this date range/config.")
 
             fold_rows: list[dict] = []
+            fold_regime_rows: list[pd.DataFrame] = []
             for i, w in enumerate(windows, start=1):
                 classifier = RegimeClassifier(thresholds=RegimeThresholds.from_config(settings.get("regime", {})))
                 strategy_fold, _ = build_strategy(strategy_id, settings=settings, symbol=args.symbol)
@@ -167,13 +177,33 @@ def main() -> int:
                     row["dominant_regime"] = str(regime_counts.index[0])
                     row["dominant_regime_share"] = float(regime_counts.iloc[0])
                 fold_rows.append(row)
+                seg = regime_segmented_returns(result.equity_curve, result.regimes)
+                if not seg.empty:
+                    seg = seg.copy()
+                    seg["fold"] = i
+                    fold_regime_rows.append(seg)
 
             fold_df = pd.DataFrame(fold_rows)
             summary = aggregate_walk_forward_metrics(fold_rows)
+            regime_table = pd.DataFrame()
+            if fold_regime_rows:
+                all_seg = pd.concat(fold_regime_rows, ignore_index=True)
+                regime_table = (
+                    all_seg.groupby("regime", as_index=False)
+                    .agg(
+                        folds=("fold", "nunique"),
+                        bars=("bars", "sum"),
+                        mean_bar_return_pct=("mean_bar_return_pct", "mean"),
+                        cumulative_return_pct=("cumulative_return_pct", "mean"),
+                    )
+                    .sort_values("regime")
+                    .reset_index(drop=True)
+                )
             run_name = f"{strategy_id}_{args.symbol.lower()}_{args.timeframe}_{start.date()}_{end.date()}_walkforward"
             paths = write_walkforward_report(
                 folds=fold_df,
                 summary=summary,
+                regime_table=regime_table,
                 output_dir=output_dir,
                 run_name=run_name,
             )
