@@ -118,6 +118,13 @@ def main() -> int:
         end=end,
         timestamp_col="date",
     )
+    option_chain = store.read_time_series(
+        "option_chain",
+        symbol=args.symbol,
+        timeframe=args.timeframe,
+        start=start,
+        end=end,
+    )
 
     simulator = FillSimulator(
         slippage_pct=float(backtest_cfg.get("slippage_pct", 0.05) or 0.05),
@@ -163,7 +170,7 @@ def main() -> int:
                     (candles["timestamp"] >= pd.Timestamp(w.test_start))
                     & (candles["timestamp"] < pd.Timestamp(w.test_end))
                 ]
-                result = engine.run(candles=test_candles, vix_df=vix, fii_df=fii)
+                result = engine.run(candles=test_candles, vix_df=vix, fii_df=fii, option_chain_df=option_chain)
                 row = {
                     "fold": i,
                     "train_start": w.train_start.isoformat(),
@@ -221,7 +228,7 @@ def main() -> int:
                 initial_capital=initial_capital,
                 periods_per_year=periods_per_year,
             )
-            result = engine.run(candles=candles, vix_df=vix, fii_df=fii)
+            result = engine.run(candles=candles, vix_df=vix, fii_df=fii, option_chain_df=option_chain)
 
             run_name = f"{strategy_id}_{args.symbol.lower()}_{args.timeframe}_{start.date()}_{end.date()}"
             paths = write_backtest_report(result, output_dir=output_dir, run_name=run_name)

@@ -49,6 +49,29 @@ class OneShotStrategy(BaseStrategy):
         return 1
 
 
+class ChainCaptureStrategy(BaseStrategy):
+    def __init__(self, name: str, config: dict):
+        super().__init__(name, config)
+        self.captured_lengths: list[int] = []
+
+    def generate_signal(self, market_data: dict, regime: RegimeState) -> Signal:
+        chain = market_data.get("option_chain")
+        self.captured_lengths.append(0 if chain is None else len(chain))
+        return Signal(
+            signal_type=SignalType.NO_SIGNAL,
+            strategy_name=self.name,
+            instrument=self.config.get("instrument", "NIFTY"),
+            timestamp=market_data["timestamp"],
+            regime=regime,
+        )
+
+    def get_exit_conditions(self, market_data: dict) -> Signal | None:
+        return None
+
+    def compute_position_size(self, capital: float, risk_per_trade: float) -> int:
+        return 1
+
+
 def test_engine_runs_and_produces_equity_and_fills():
     candles = pd.DataFrame(
         {
@@ -75,3 +98,37 @@ def test_engine_runs_and_produces_equity_and_fills():
     assert len(result.equity_curve) == 5
     assert len(result.fills) >= 2
     assert "final_equity" in result.metrics
+
+
+def test_engine_passes_latest_option_chain_snapshot_to_strategy():
+    candles = pd.DataFrame(
+        {
+            "timestamp": pd.date_range("2026-01-01", periods=3, freq="D"),
+            "open": [100, 101, 102],
+            "high": [101, 102, 103],
+            "low": [99, 100, 101],
+            "close": [100, 101, 102],
+        }
+    )
+    chain = pd.DataFrame(
+        {
+            "timestamp": pd.to_datetime(
+                ["2026-01-01 00:00:00", "2026-01-01 00:00:00", "2026-01-03 00:00:00", "2026-01-03 00:00:00"]
+            ),
+            "option_type": ["CE", "PE", "CE", "PE"],
+            "strike": [22000, 22000, 22100, 21900],
+        }
+    )
+    strategy = ChainCaptureStrategy(
+        name="chain_capture",
+        config={"instrument": "NIFTY", "active_regimes": [RegimeState.LOW_VOL_RANGING.value]},
+    )
+    engine = BacktestEngine(
+        classifier=RegimeClassifier(thresholds=RegimeThresholds()),
+        strategy=strategy,
+        simulator=FillSimulator(slippage_pct=0.0, commission_per_order=0.0),
+        initial_capital=1000.0,
+    )
+    engine.run(candles=candles, option_chain_df=chain)
+    assert strategy.captured_lengths[0] == 2
+    assert strategy.captured_lengths[-1] == 2

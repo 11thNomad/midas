@@ -38,6 +38,7 @@ class BacktestEngine:
         candles: pd.DataFrame,
         vix_df: pd.DataFrame | None = None,
         fii_df: pd.DataFrame | None = None,
+        option_chain_df: pd.DataFrame | None = None,
     ) -> BacktestResult:
         if candles.empty:
             empty = pd.DataFrame()
@@ -53,6 +54,7 @@ class BacktestEngine:
         bars = bars.dropna(subset=["timestamp"]).sort_values("timestamp").reset_index(drop=True)
         vix = self._prep_vix(vix_df)
         fii = self._prep_fii(fii_df)
+        chain = self._prep_chain(option_chain_df)
 
         cash = float(self.initial_capital)
         position_qty = 0
@@ -68,6 +70,7 @@ class BacktestEngine:
             candles_hist = bars.iloc[: i + 1]
             vix_hist = vix.loc[vix["timestamp"] <= pd.Timestamp(ts)] if not vix.empty else pd.DataFrame()
             fii_hist = fii.loc[fii["date"] <= pd.Timestamp(ts)] if not fii.empty else pd.DataFrame()
+            chain_asof = self._latest_chain_asof(chain, ts)
 
             vix_series = vix_hist["close"].astype("float64") if not vix_hist.empty else None
             vix_value = float(vix_series.iloc[-1]) if vix_series is not None and not vix_series.empty else 0.0
@@ -91,6 +94,8 @@ class BacktestEngine:
                 previous_regime=previous_regime,
                 candles_hist=candles_hist,
                 vix_value=vix_value,
+                option_chain=chain_asof,
+                underlying_price=close_price,
             )
             previous_regime = regime
 
@@ -128,10 +133,18 @@ class BacktestEngine:
         previous_regime: RegimeState,
         candles_hist: pd.DataFrame,
         vix_value: float,
+        option_chain: pd.DataFrame | None,
+        underlying_price: float,
     ) -> Signal | None:
         if self.strategy.should_be_active(regime):
             return self.strategy.generate_signal(
-                market_data={"timestamp": timestamp, "candles": candles_hist, "vix": vix_value},
+                market_data={
+                    "timestamp": timestamp,
+                    "candles": candles_hist,
+                    "vix": vix_value,
+                    "option_chain": option_chain,
+                    "underlying_price": underlying_price,
+                },
                 regime=regime,
             )
         return self.strategy.on_regime_change(previous_regime, regime)
@@ -157,3 +170,30 @@ class BacktestEngine:
         out["date"] = pd.to_datetime(out["date"], errors="coerce")
         out["fii_net"] = pd.to_numeric(out["fii_net"], errors="coerce")
         return out.dropna(subset=["date", "fii_net"]).sort_values("date").reset_index(drop=True)
+
+    @staticmethod
+    def _prep_chain(chain_df: pd.DataFrame | None) -> pd.DataFrame:
+        if chain_df is None or chain_df.empty:
+            return pd.DataFrame(columns=["timestamp", "option_type", "strike"])
+        out = chain_df.copy()
+        if "timestamp" not in out.columns:
+            return pd.DataFrame(columns=["timestamp", "option_type", "strike"])
+        out["timestamp"] = pd.to_datetime(out["timestamp"], errors="coerce")
+        if "option_type" in out.columns:
+            out["option_type"] = out["option_type"].astype(str).str.upper()
+        if "strike" in out.columns:
+            out["strike"] = pd.to_numeric(out["strike"], errors="coerce")
+        out = out.dropna(subset=["timestamp"]).sort_values("timestamp").reset_index(drop=True)
+        return out
+
+    @staticmethod
+    def _latest_chain_asof(chain_df: pd.DataFrame, ts: datetime) -> pd.DataFrame | None:
+        if chain_df.empty:
+            return None
+        cutoff = pd.Timestamp(ts)
+        eligible = chain_df.loc[chain_df["timestamp"] <= cutoff]
+        if eligible.empty:
+            return None
+        latest_ts = eligible["timestamp"].max()
+        snap = eligible.loc[eligible["timestamp"] == latest_ts].copy()
+        return snap.reset_index(drop=True)
