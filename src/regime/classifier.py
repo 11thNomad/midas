@@ -30,6 +30,8 @@ class RegimeSignals:
     # Volatility
     india_vix: float = 0.0
     vix_change_5d: float = 0.0   # VIX change over last 5 days (rate of change matters)
+    iv_surface_parallel_shift: float = 0.0
+    iv_surface_tilt_change: float = 0.0
 
     # Trend strength
     adx_14: float = 0.0          # ADX(14) on Nifty daily
@@ -55,6 +57,9 @@ class RegimeThresholds:
     pcr_oversold: float = 0.7
     pcr_overbought: float = 1.3
     corr_breakdown: float = 0.80  # If Nifty-BankNifty corr drops below this, something unusual
+    vix_spike_5d_alert: float = 3.0
+    iv_surface_shift_alert: float = 2.0
+    iv_surface_tilt_alert: float = 1.5
 
     @classmethod
     def from_config(cls, config: dict) -> "RegimeThresholds":
@@ -67,6 +72,10 @@ class RegimeThresholds:
             fii_selling_alert=config.get("fii_selling_alert", -6000.0),
             pcr_oversold=config.get("pcr_oversold", 0.7),
             pcr_overbought=config.get("pcr_overbought", 1.3),
+            corr_breakdown=config.get("corr_breakdown", 0.80),
+            vix_spike_5d_alert=config.get("vix_spike_5d_alert", 3.0),
+            iv_surface_shift_alert=config.get("iv_surface_shift_alert", 2.0),
+            iv_surface_tilt_alert=config.get("iv_surface_tilt_alert", 1.5),
         )
 
 
@@ -144,6 +153,30 @@ class RegimeClassifier:
                 )
                 new_regime = RegimeState.HIGH_VOL_CHOPPY
 
+        # Override: fast VIX expansion often precedes unstable/choppy tape.
+        if signals.vix_change_5d >= self.thresholds.vix_spike_5d_alert:
+            if new_regime in (RegimeState.LOW_VOL_TRENDING, RegimeState.LOW_VOL_RANGING):
+                logger.warning(
+                    "VIX 5-day spike overriding low-vol classification",
+                    vix_change_5d=signals.vix_change_5d,
+                    original_regime=new_regime.value,
+                )
+                new_regime = RegimeState.HIGH_VOL_CHOPPY
+
+        # Override: abrupt IV surface shifts/tilts indicate options stress regime.
+        iv_surface_stress = (
+            abs(signals.iv_surface_parallel_shift) >= self.thresholds.iv_surface_shift_alert
+            or abs(signals.iv_surface_tilt_change) >= self.thresholds.iv_surface_tilt_alert
+        )
+        if iv_surface_stress and new_regime in (RegimeState.LOW_VOL_TRENDING, RegimeState.LOW_VOL_RANGING):
+            logger.warning(
+                "IV surface stress overriding low-vol classification",
+                iv_surface_parallel_shift=signals.iv_surface_parallel_shift,
+                iv_surface_tilt_change=signals.iv_surface_tilt_change,
+                original_regime=new_regime.value,
+            )
+            new_regime = RegimeState.HIGH_VOL_CHOPPY
+
         # Override: correlation breakdown signals structural change
         if signals.nifty_banknifty_corr < self.thresholds.corr_breakdown:
             logger.warning(
@@ -169,6 +202,9 @@ class RegimeClassifier:
             "adx": signals.adx_14,
             "pcr": signals.pcr,
             "fii_net_3d": signals.fii_net_3d,
+            "vix_change_5d": signals.vix_change_5d,
+            "iv_surface_parallel_shift": signals.iv_surface_parallel_shift,
+            "iv_surface_tilt_change": signals.iv_surface_tilt_change,
         }
         self.history.append(transition)
         self.regime_since = signals.timestamp
