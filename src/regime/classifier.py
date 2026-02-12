@@ -105,6 +105,7 @@ class RegimeClassifier:
     previous_regime: RegimeState = RegimeState.UNKNOWN
     regime_since: datetime | None = None
     history: list[dict] = field(default_factory=list)
+    snapshots: list[dict] = field(default_factory=list)
 
     def classify(self, signals: RegimeSignals) -> RegimeState:
         """
@@ -190,7 +191,28 @@ class RegimeClassifier:
             self._on_regime_change(new_regime, signals)
 
         self.current_regime = new_regime
+        self.snapshots.append(self.snapshot(signals=signals, regime=new_regime))
         return new_regime
+
+    def snapshot(self, signals: RegimeSignals, regime: RegimeState | None = None) -> dict[str, Any]:
+        """Return a normalized snapshot row for persistence and debugging."""
+        resolved_regime = regime or self.current_regime
+        return {
+            "timestamp": signals.timestamp.isoformat(),
+            "regime": resolved_regime.value,
+            "previous_regime": self.previous_regime.value,
+            "regime_since": self.regime_since.isoformat() if self.regime_since else None,
+            "india_vix": signals.india_vix,
+            "vix_change_5d": signals.vix_change_5d,
+            "adx_14": signals.adx_14,
+            "pcr": signals.pcr,
+            "fii_net_3d": signals.fii_net_3d,
+            "nifty_above_50dma": signals.nifty_above_50dma,
+            "nifty_above_200dma": signals.nifty_above_200dma,
+            "nifty_banknifty_corr": signals.nifty_banknifty_corr,
+            "iv_surface_parallel_shift": signals.iv_surface_parallel_shift,
+            "iv_surface_tilt_change": signals.iv_surface_tilt_change,
+        }
 
     def _on_regime_change(self, new_regime: RegimeState, signals: RegimeSignals):
         """Log and record regime transitions."""
