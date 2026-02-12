@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from src.regime.classifier import RegimeClassifier, RegimeSignals, RegimeThresholds
-from src.regime.persistence import RegimeSnapshotStore
+from src.regime.persistence import RegimeSnapshotStore, StrategyTransitionStore
 from src.regime.runtime import RegimeRuntime
 from src.strategies.base import BaseStrategy, RegimeState, Signal, SignalType
 from src.strategies.router import StrategyRouter
@@ -35,7 +35,14 @@ def test_runtime_process_routes_and_persists_snapshot(tmp_path):
     strategy.state.is_active = False
     router = StrategyRouter(strategies=[strategy])
     store = RegimeSnapshotStore(base_dir=str(tmp_path / "cache"))
-    runtime = RegimeRuntime(classifier=classifier, router=router, snapshot_store=store, symbol="NIFTY")
+    transition_store = StrategyTransitionStore(base_dir=str(tmp_path / "cache"))
+    runtime = RegimeRuntime(
+        classifier=classifier,
+        router=router,
+        snapshot_store=store,
+        transition_store=transition_store,
+        symbol="NIFTY",
+    )
 
     signals = RegimeSignals(
         timestamp=datetime(2026, 1, 2, 9, 15),
@@ -51,3 +58,7 @@ def test_runtime_process_routes_and_persists_snapshot(tmp_path):
     persisted = store.read_snapshots(symbol="NIFTY")
     assert len(persisted) == 1
     assert persisted.loc[0, "regime"] == RegimeState.LOW_VOL_TRENDING.value
+
+    transitions = transition_store.read_transitions(symbol="NIFTY")
+    assert len(transitions) == 1
+    assert transitions.loc[0, "strategy"] == "dummy"

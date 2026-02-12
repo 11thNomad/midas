@@ -75,3 +75,48 @@ class RegimeSnapshotStore:
             end=end,
             timestamp_col="timestamp",
         )
+
+
+@dataclass
+class StrategyTransitionStore:
+    """Write/read strategy-router activation transitions."""
+
+    base_dir: str = "data/cache"
+    dataset: str = "strategy_transitions"
+    _store: DataStore = field(init=False, repr=False)
+
+    def __post_init__(self):
+        self._store = DataStore(base_dir=self.base_dir)
+
+    def persist_transitions(self, transitions: list[dict], *, symbol: str = "NIFTY", source: str = "strategy_router") -> int:
+        if not transitions:
+            return 0
+        frame = pd.DataFrame(transitions)
+        if "timestamp" not in frame.columns:
+            raise ValueError("Transitions require 'timestamp' field.")
+        frame["timestamp"] = pd.to_datetime(frame["timestamp"], errors="coerce")
+        frame = frame.dropna(subset=["timestamp"])
+        if frame.empty:
+            return 0
+        return self._store.write_time_series(
+            self.dataset,
+            frame,
+            symbol=symbol,
+            timestamp_col="timestamp",
+            source=source,
+        )
+
+    def read_transitions(
+        self,
+        *,
+        symbol: str = "NIFTY",
+        start: datetime | None = None,
+        end: datetime | None = None,
+    ) -> pd.DataFrame:
+        return self._store.read_time_series(
+            self.dataset,
+            symbol=symbol,
+            start=start,
+            end=end,
+            timestamp_col="timestamp",
+        )
