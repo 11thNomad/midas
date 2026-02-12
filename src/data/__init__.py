@@ -1,5 +1,6 @@
 """Data layer exports."""
 
+from src.data.contracts import NormalizedCandleDTO, NormalizedFiiDiiDTO, NormalizedOptionRowDTO
 from src.data.feed import CandleRequest, DataFeed
 from src.data.fii import FiiDownloadError, NseFiiClient, fetch_fii_dii, load_or_fetch_fii_dii
 from src.data.free_feed import DataFeedError, DataUnavailableError, FreeFeed
@@ -19,6 +20,9 @@ from src.data.truedata_feed import TrueDataFeed
 __all__ = [
     "CandleRequest",
     "DataFeed",
+    "NormalizedCandleDTO",
+    "NormalizedOptionRowDTO",
+    "NormalizedFiiDiiDTO",
     "FiiDownloadError",
     "NseFiiClient",
     "DataFeedError",
