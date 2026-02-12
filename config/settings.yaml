@@ -153,3 +153,19 @@ monitoring:
     - drawdown_warning       # At 10% drawdown, before 15% kill
     - api_error
     - regime_change
+
+# === Data Quality Gates ===
+data_quality:
+  thresholds:
+    max_missing_timestamps: 0
+    max_duplicate_timestamps: 0
+    max_invalid_ohlc_rows: 0
+    max_negative_or_zero_price_rows: 0
+    max_non_monotonic_timestamps: 0
+    max_missing_trading_days: 0
+    max_largest_gap_minutes: null
+  thresholds_by_timeframe:
+    1d:
+      max_largest_gap_minutes: 6000
+    5m:
+      max_largest_gap_minutes: 8000

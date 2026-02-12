@@ -35,10 +35,7 @@ def load_settings(path: str) -> dict:
     p = REPO_ROOT / path
     if p.exists():
         return yaml.safe_load(p.read_text())
-    fallback = REPO_ROOT / "settings.yaml"
-    if fallback.exists():
-        return yaml.safe_load(fallback.read_text())
-    return {}
+    raise FileNotFoundError(f"Settings file not found: {p}")
 
 
 def resolve_window(args: argparse.Namespace) -> tuple[datetime, datetime]:

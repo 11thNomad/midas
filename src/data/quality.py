@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date
 
 import pandas as pd
+
+from src.data.calendar import NSECalendar, nse_calendar
 
 
 @dataclass
@@ -16,7 +18,7 @@ class CandleQualityReport:
     invalid_ohlc_rows: int
     negative_or_zero_price_rows: int
     non_monotonic_timestamps: int
-    missing_business_days: int | None
+    missing_trading_days: int | None
     largest_gap_minutes: float | None
 
     def as_dict(self) -> dict:
@@ -27,8 +29,33 @@ class CandleQualityReport:
             "invalid_ohlc_rows": self.invalid_ohlc_rows,
             "negative_or_zero_price_rows": self.negative_or_zero_price_rows,
             "non_monotonic_timestamps": self.non_monotonic_timestamps,
-            "missing_business_days": self.missing_business_days,
+            "missing_trading_days": self.missing_trading_days,
             "largest_gap_minutes": self.largest_gap_minutes,
+        }
+
+
+@dataclass
+class CandleQualityThresholds:
+    max_missing_timestamps: int = 0
+    max_duplicate_timestamps: int = 0
+    max_invalid_ohlc_rows: int = 0
+    max_negative_or_zero_price_rows: int = 0
+    max_non_monotonic_timestamps: int = 0
+    max_missing_trading_days: int = 0
+    max_largest_gap_minutes: float | None = None
+
+
+@dataclass
+class QualityGateResult:
+    status: str
+    issue_count: int
+    violations: list[str]
+
+    def as_dict(self) -> dict:
+        return {
+            "status": self.status,
+            "issue_count": self.issue_count,
+            "violations": self.violations,
         }
 
 
@@ -38,7 +65,12 @@ def _safe_minutes(delta: pd.Timedelta | None) -> float | None:
     return round(float(delta.total_seconds()) / 60.0, 2)
 
 
-def assess_candle_quality(df: pd.DataFrame, timeframe: str) -> CandleQualityReport:
+def assess_candle_quality(
+    df: pd.DataFrame,
+    timeframe: str,
+    *,
+    calendar: NSECalendar | None = None,
+) -> CandleQualityReport:
     if df.empty:
         return CandleQualityReport(
             rows=0,
@@ -47,7 +79,7 @@ def assess_candle_quality(df: pd.DataFrame, timeframe: str) -> CandleQualityRepo
             invalid_ohlc_rows=0,
             negative_or_zero_price_rows=0,
             non_monotonic_timestamps=0,
-            missing_business_days=None,
+            missing_trading_days=None,
             largest_gap_minutes=None,
         )
 
@@ -79,13 +111,14 @@ def assess_candle_quality(df: pd.DataFrame, timeframe: str) -> CandleQualityRepo
     deltas = data["timestamp"].diff().dropna()
     largest_gap_minutes = _safe_minutes(deltas.max() if not deltas.empty else None)
 
-    missing_business_days: int | None = None
+    missing_trading_days: int | None = None
     if timeframe.lower() == "1d" and len(data) > 1:
-        start = data["timestamp"].min().normalize()
-        end = data["timestamp"].max().normalize()
-        expected = pd.bdate_range(start=start, end=end)
-        observed = pd.DatetimeIndex(data["timestamp"].dt.normalize().unique())
-        missing_business_days = int(len(expected.difference(observed)))
+        start_day = data["timestamp"].min().date()
+        end_day = data["timestamp"].max().date()
+        cal = calendar or nse_calendar
+        expected = set(cal.trading_days_between(start=start_day, end=end_day))
+        observed = {ts.date() for ts in data["timestamp"].dt.normalize().unique()}
+        missing_trading_days = int(len(expected.difference(observed)))
 
     return CandleQualityReport(
         rows=rows,
@@ -94,7 +127,7 @@ def assess_candle_quality(df: pd.DataFrame, timeframe: str) -> CandleQualityRepo
         invalid_ohlc_rows=invalid_ohlc_rows,
         negative_or_zero_price_rows=negative_or_zero_price_rows,
         non_monotonic_timestamps=non_monotonic_timestamps,
-        missing_business_days=missing_business_days,
+        missing_trading_days=missing_trading_days,
         largest_gap_minutes=largest_gap_minutes,
     )
 
@@ -106,6 +139,64 @@ def summarize_issue_count(report: CandleQualityReport) -> int:
         report.invalid_ohlc_rows,
         report.negative_or_zero_price_rows,
         report.non_monotonic_timestamps,
-        report.missing_business_days or 0,
+        report.missing_trading_days or 0,
     ]
     return int(sum(fields))
+
+
+def evaluate_quality_gate(
+    report: CandleQualityReport,
+    thresholds: CandleQualityThresholds,
+) -> QualityGateResult:
+    violations: list[str] = []
+
+    checks = [
+        ("missing_timestamps", report.missing_timestamps, thresholds.max_missing_timestamps),
+        ("duplicate_timestamps", report.duplicate_timestamps, thresholds.max_duplicate_timestamps),
+        ("invalid_ohlc_rows", report.invalid_ohlc_rows, thresholds.max_invalid_ohlc_rows),
+        (
+            "negative_or_zero_price_rows",
+            report.negative_or_zero_price_rows,
+            thresholds.max_negative_or_zero_price_rows,
+        ),
+        (
+            "non_monotonic_timestamps",
+            report.non_monotonic_timestamps,
+            thresholds.max_non_monotonic_timestamps,
+        ),
+        (
+            "missing_trading_days",
+            report.missing_trading_days or 0,
+            thresholds.max_missing_trading_days,
+        ),
+    ]
+
+    for label, value, limit in checks:
+        if value > limit:
+            violations.append(f"{label}={value} > {limit}")
+
+    if thresholds.max_largest_gap_minutes is not None:
+        if (report.largest_gap_minutes or 0.0) > thresholds.max_largest_gap_minutes:
+            violations.append(
+                f"largest_gap_minutes={report.largest_gap_minutes} > {thresholds.max_largest_gap_minutes}"
+            )
+
+    issue_count = summarize_issue_count(report)
+    status = "ok" if not violations else "failed_thresholds"
+    return QualityGateResult(status=status, issue_count=issue_count, violations=violations)
+
+
+def thresholds_from_config(config: dict) -> CandleQualityThresholds:
+    return CandleQualityThresholds(
+        max_missing_timestamps=int(config.get("max_missing_timestamps", 0)),
+        max_duplicate_timestamps=int(config.get("max_duplicate_timestamps", 0)),
+        max_invalid_ohlc_rows=int(config.get("max_invalid_ohlc_rows", 0)),
+        max_negative_or_zero_price_rows=int(config.get("max_negative_or_zero_price_rows", 0)),
+        max_non_monotonic_timestamps=int(config.get("max_non_monotonic_timestamps", 0)),
+        max_missing_trading_days=int(config.get("max_missing_trading_days", 0)),
+        max_largest_gap_minutes=(
+            float(config["max_largest_gap_minutes"])
+            if config.get("max_largest_gap_minutes") is not None
+            else None
+        ),
+    )
