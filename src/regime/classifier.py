@@ -60,6 +60,9 @@ class RegimeThresholds:
     vix_spike_5d_alert: float = 3.0
     iv_surface_shift_alert: float = 2.0
     iv_surface_tilt_alert: float = 1.5
+    vix_hysteresis_buffer: float = 0.5
+    adx_hysteresis_buffer: float = 2.0
+    adx_smoothing_alpha: float = 0.3
 
     @classmethod
     def from_config(cls, config: dict) -> "RegimeThresholds":
@@ -76,6 +79,9 @@ class RegimeThresholds:
             vix_spike_5d_alert=config.get("vix_spike_5d_alert", 3.0),
             iv_surface_shift_alert=config.get("iv_surface_shift_alert", 2.0),
             iv_surface_tilt_alert=config.get("iv_surface_tilt_alert", 1.5),
+            vix_hysteresis_buffer=config.get("vix_hysteresis_buffer", 0.5),
+            adx_hysteresis_buffer=config.get("adx_hysteresis_buffer", 2.0),
+            adx_smoothing_alpha=config.get("adx_smoothing_alpha", 0.3),
         )
 
 
@@ -106,6 +112,7 @@ class RegimeClassifier:
     regime_since: datetime | None = None
     history: list[dict] = field(default_factory=list)
     snapshots: list[dict] = field(default_factory=list)
+    _smoothed_adx: float | None = None
 
     def classify(self, signals: RegimeSignals) -> RegimeState:
         """
@@ -115,10 +122,10 @@ class RegimeClassifier:
         """
         self.previous_regime = self.current_regime
 
-        # Base classification: VIX x ADX matrix
-        low_vol = signals.india_vix < self.thresholds.vix_low
-        high_vol = signals.india_vix >= self.thresholds.vix_high
-        trending = signals.adx_14 >= self.thresholds.adx_trending
+        # Base classification: VIX x ADX matrix with hysteresis + smoothing.
+        adx_for_state = self._smooth_adx(signals.adx_14)
+        low_vol, high_vol = self._resolve_vix_state(signals.india_vix)
+        trending = self._resolve_trend_state(adx_for_state)
 
         if low_vol and trending:
             new_regime = RegimeState.LOW_VOL_TRENDING
@@ -205,6 +212,7 @@ class RegimeClassifier:
             "india_vix": signals.india_vix,
             "vix_change_5d": signals.vix_change_5d,
             "adx_14": signals.adx_14,
+            "adx_14_smoothed": self._smoothed_adx if self._smoothed_adx is not None else signals.adx_14,
             "pcr": signals.pcr,
             "fii_net_3d": signals.fii_net_3d,
             "nifty_above_50dma": signals.nifty_above_50dma,
@@ -222,6 +230,7 @@ class RegimeClassifier:
             "to": new_regime.value,
             "vix": signals.india_vix,
             "adx": signals.adx_14,
+            "adx_smoothed": self._smoothed_adx if self._smoothed_adx is not None else signals.adx_14,
             "pcr": signals.pcr,
             "fii_net_3d": signals.fii_net_3d,
             "vix_change_5d": signals.vix_change_5d,
@@ -259,3 +268,44 @@ class RegimeClassifier:
         duration = self.get_regime_duration_days()
         dur_str = f" ({duration}d)" if duration is not None else ""
         return f"<Regime: {self.current_regime.value}{dur_str}>"
+
+    def _smooth_adx(self, adx_raw: float) -> float:
+        alpha = self.thresholds.adx_smoothing_alpha
+        if self._smoothed_adx is None:
+            self._smoothed_adx = float(adx_raw)
+        else:
+            self._smoothed_adx = alpha * float(adx_raw) + (1.0 - alpha) * self._smoothed_adx
+        return float(self._smoothed_adx)
+
+    def _resolve_vix_state(self, india_vix: float) -> tuple[bool, bool]:
+        vix = float(india_vix)
+        b = self.thresholds.vix_hysteresis_buffer
+
+        low_family = self.current_regime in (RegimeState.LOW_VOL_TRENDING, RegimeState.LOW_VOL_RANGING)
+        high_family = self.current_regime in (RegimeState.HIGH_VOL_TRENDING, RegimeState.HIGH_VOL_CHOPPY)
+
+        if low_family:
+            low_vol = vix < (self.thresholds.vix_low + b)
+            high_vol = vix >= (self.thresholds.vix_high + b)
+        elif high_family:
+            low_vol = vix < (self.thresholds.vix_low - b)
+            high_vol = vix >= (self.thresholds.vix_high - b)
+        else:
+            low_vol = vix < self.thresholds.vix_low
+            high_vol = vix >= self.thresholds.vix_high
+
+        return low_vol, high_vol
+
+    def _resolve_trend_state(self, adx_value: float) -> bool:
+        adx = float(adx_value)
+        b = self.thresholds.adx_hysteresis_buffer
+        prev_trending = self.current_regime in (RegimeState.LOW_VOL_TRENDING, RegimeState.HIGH_VOL_TRENDING)
+        enter_threshold = self.thresholds.adx_trending + b
+        exit_threshold = max(self.thresholds.adx_ranging - b, 0.0)
+        stay_threshold = max(self.thresholds.adx_trending - b, 0.0)
+
+        if prev_trending:
+            return adx >= stay_threshold
+        if adx <= exit_threshold:
+            return False
+        return adx >= enter_threshold

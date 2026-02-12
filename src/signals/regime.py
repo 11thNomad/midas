@@ -33,8 +33,11 @@ def build_regime_signals(
         close = candles["close"]
         high = candles["high"]
         low = candles["low"]
-        adx_series = trend.adx(high=high, low=low, close=close, period=14)
-        adx_14 = float(adx_series.dropna().iloc[-1]) if not adx_series.dropna().empty else 0.0
+        if len(candles) >= 28:
+            adx_series = trend.adx(high=high, low=low, close=close, period=14)
+            adx_14 = float(adx_series.dropna().iloc[-1]) if not adx_series.dropna().empty else 0.0
+        else:
+            adx_14 = 0.0
 
         dma50 = trend.sma(close, period=50)
         dma200 = trend.sma(close, period=200)

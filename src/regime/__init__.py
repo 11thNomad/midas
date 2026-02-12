@@ -2,6 +2,7 @@
 
 from src.regime.classifier import RegimeClassifier, RegimeSignals, RegimeThresholds
 from src.regime.persistence import RegimeSnapshotStore, StrategyTransitionStore
+from src.regime.replay import ReplayResult, replay_regimes_no_lookahead
 from src.regime.reporting import (
     summarize_regime_daily,
     summarize_transitions_by_strategy,
@@ -16,6 +17,8 @@ __all__ = [
     "RegimeSnapshotStore",
     "StrategyTransitionStore",
     "RegimeRuntime",
+    "ReplayResult",
+    "replay_regimes_no_lookahead",
     "summarize_regime_daily",
     "summarize_transitions_daily",
     "summarize_transitions_by_strategy",

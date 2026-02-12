@@ -37,6 +37,11 @@ regime:
   iv_surface_shift_alert: 2.0
   iv_surface_tilt_alert: 1.5
 
+  # Stability controls (Phase 3)
+  vix_hysteresis_buffer: 0.5
+  adx_hysteresis_buffer: 2.0
+  adx_smoothing_alpha: 0.3
+
   # States: low_vol_trending | low_vol_ranging | high_vol_trending | high_vol_choppy
   # Each strategy declares which regimes it's active in
 

@@ -32,6 +32,30 @@
 
 ---
 
+## Current Status Checkpoint (Updated: 2026-02-12)
+
+### Active Phase
+- **Current implementation phase:** Phase 4-ready (Phase 3 implementation gate complete) with early Phase 6 paper-runtime scaffolding.
+- **Interpretation:** Core signal + regime plumbing + replay validation are complete in code. Next major build is Phase 4 backtesting engine.
+
+### What Is Already Covered
+- [x] Phase 1 core data interfaces (`DataFeed`, store, quality checks, DTO contracts + normalization wiring)
+- [x] Phase 2 signal library modules + unit tests (including IV surface change signals)
+- [x] Phase 3 baseline classifier + overrides + snapshot persistence + strategy activation router
+- [x] Paper runtime scaffold (`scripts/run_paper.py`) with persisted regime snapshots/transitions
+
+### Immediate TODOs (Added)
+- [ ] Replace `NoOpStrategy` in `scripts/run_paper.py` with real strategy classes as they are implemented.
+- [ ] Add `paper_fills` daily P&L/reporting script (fills, fees, gross/net by day/strategy).
+
+### Required To Proceed To Phase 4
+- [x] Add/confirm hysteresis + smoothing behavior tests in classifier to reduce flip-flops in transition zone.
+- [x] Prove strict no-lookahead regime computation path for historical replay.
+- [x] Run an end-to-end dry replay path that logs regime transitions and supports sanity validation (`scripts/replay_regime.py`).
+- [ ] Convert replay outputs into final notebook artifact for visual inspection (optional packaging task; not a code blocker).
+
+---
+
 ## Vision & Philosophy
 
 ### What we're building

@@ -74,3 +74,40 @@ def test_build_regime_signals_populates_iv_and_vix_change_fields():
 
     assert signals.vix_change_5d > 0
     assert signals.iv_surface_parallel_shift == 2.0
+
+
+def test_vix_hysteresis_reduces_flip_flops_around_threshold():
+    classifier = RegimeClassifier(
+        thresholds=RegimeThresholds(vix_low=14.0, vix_high=18.0, vix_hysteresis_buffer=0.5)
+    )
+
+    regimes = []
+    for i, vix in enumerate([13.9, 14.1, 13.95, 14.2, 13.85]):
+        regimes.append(
+            classifier.classify(
+                RegimeSignals(timestamp=datetime(2026, 1, 1, 9, 15 + i), india_vix=vix, adx_14=30.0)
+            )
+        )
+
+    assert all(r == RegimeState.LOW_VOL_TRENDING for r in regimes)
+
+
+def test_adx_smoothing_and_hysteresis_hold_trend_state_on_small_dip():
+    classifier = RegimeClassifier(
+        thresholds=RegimeThresholds(
+            adx_trending=25.0,
+            adx_ranging=20.0,
+            adx_hysteresis_buffer=2.0,
+            adx_smoothing_alpha=0.5,
+        )
+    )
+
+    first = classifier.classify(
+        RegimeSignals(timestamp=datetime(2026, 1, 1, 9, 15), india_vix=13.0, adx_14=30.0)
+    )
+    second = classifier.classify(
+        RegimeSignals(timestamp=datetime(2026, 1, 1, 9, 20), india_vix=13.0, adx_14=23.5)
+    )
+
+    assert first == RegimeState.LOW_VOL_TRENDING
+    assert second == RegimeState.LOW_VOL_TRENDING
