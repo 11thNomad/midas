@@ -7,6 +7,7 @@
 data/cache/
 data/logs/
 data/reports/
+data/raw/
 *.parquet
 *.h5
 

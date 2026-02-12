@@ -1,0 +1,60 @@
+from __future__ import annotations
+
+from datetime import datetime
+
+import pandas as pd
+
+from src.data.store import DataStore
+
+
+def test_write_and_read_timeseries(tmp_path):
+    store = DataStore(base_dir=str(tmp_path / "cache"))
+
+    df = pd.DataFrame(
+        {
+            "timestamp": pd.to_datetime(["2026-01-02", "2026-01-03"]),
+            "open": [1.0, 2.0],
+            "high": [1.5, 2.5],
+            "low": [0.5, 1.5],
+            "close": [1.2, 2.2],
+            "volume": [10, 20],
+        }
+    )
+
+    written = store.write_time_series("candles", df, symbol="TEST", timeframe="1d")
+    assert written == 2
+
+    loaded = store.read_time_series(
+        "candles",
+        symbol="TEST",
+        timeframe="1d",
+        start=datetime(2026, 1, 1),
+        end=datetime(2026, 1, 31),
+    )
+    assert len(loaded) == 2
+    assert list(loaded.columns) == ["timestamp", "open", "high", "low", "close", "volume"]
+
+
+def test_upsert_deduplicates_and_reports_net_new_rows(tmp_path):
+    store = DataStore(base_dir=str(tmp_path / "cache"))
+
+    first = pd.DataFrame(
+        {
+            "timestamp": pd.to_datetime(["2026-01-02", "2026-01-03"]),
+            "value": [1, 2],
+        }
+    )
+    second = pd.DataFrame(
+        {
+            "timestamp": pd.to_datetime(["2026-01-03", "2026-01-04"]),
+            "value": [3, 4],
+        }
+    )
+
+    assert store.write_time_series("custom", first) == 2
+    assert store.write_time_series("custom", second) == 1
+
+    loaded = store.read_time_series("custom")
+    assert len(loaded) == 3
+    # 2026-01-03 should have been replaced by value=3 from second write
+    assert loaded.loc[loaded["timestamp"] == pd.Timestamp("2026-01-03"), "value"].iloc[0] == 3
