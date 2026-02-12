@@ -7,9 +7,8 @@ license = {text = "MIT"}
 
 dependencies = [
     # === Data Layer ===
-    "jugaad-data>=0.25",        # Free NSE historical data
-    "openchart>=0.1",           # Free NSE intraday data
-    "yfinance>=0.2",            # Yahoo Finance fallback
+    "jugaad-data==0.29",        # Free NSE historical data
+    "openchart==0.2.0",         # Free NSE intraday data
 
     # === Execution ===
     "kiteconnect>=5.0",         # Zerodha Kite Connect API
@@ -23,7 +22,7 @@ dependencies = [
     "mibian>=0.1",              # Options pricing (backup/validation)
 
     # === Backtesting ===
-    "vectorbt>=0.26",           # Fast vectorized backtesting
+    "vectorbt==0.28.4",         # Fast vectorized backtesting
 
     # === Storage ===
     "pyarrow>=14.0",            # Parquet file support (fast columnar storage)
@@ -44,7 +43,7 @@ dependencies = [
 
     # === HTTP ===
     "httpx>=0.25",              # Async HTTP client (TrueData API calls)
-    "websockets>=12.0",         # WebSocket for real-time data streams
+    "websockets==15.0.1",       # WebSocket for real-time data streams
 ]
 
 [project.optional-dependencies]
@@ -59,10 +58,13 @@ dev = [
     "matplotlib>=3.8",          # Plotting in notebooks
     "seaborn>=0.13",
 ]
+data = [
+    "yfinance>=0.2",            # Optional Yahoo Finance fallback
+]
 
 [build-system]
 requires = ["setuptools>=68.0"]
-build-backend = "setuptools.backends._legacy:_Backend"
+build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["."]
