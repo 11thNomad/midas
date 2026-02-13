@@ -45,19 +45,20 @@
 - [x] Phase 4 backtest stack (`scripts/run_backtest.py`) with walk-forward, anti-overfitting checks, and report generation scaffolding
 - [x] Phase 5 initial strategy set in code (`iron_condor`, `momentum`, `regime_probe`) with unit coverage
 - [x] Paper runtime scaffold (`scripts/run_paper.py`) with persisted regime snapshots/transitions
-- [x] Current automated test baseline green (`80 passed`)
+- [x] Current automated test baseline green (`86 passed`)
 
 ### Immediate TODOs (Added)
 - [x] Wire real Kite option-chain snapshots into `scripts/run_paper.py` (`chain_df` and `previous_chain_df`) and persist snapshots into cache.
-- [ ] Replace remaining `NoOpStrategy` usage in `scripts/run_paper.py` with explicit strategy classes or fail-fast config validation.
+- [x] Replace remaining `NoOpStrategy` usage in `scripts/run_paper.py` with fail-fast config validation for unknown enabled strategies.
 - [x] Move paper/runtime and historical ingest paths to Kite-only provider wiring (`scripts/run_paper.py`, `scripts/download_historical.py`).
 - [x] Replace multi-provider health check with Kite-focused checks (auth/profile + quote smoke checks).
 - [x] Remove legacy `src/data/free_feed.py` module and free-data dependencies.
 - [ ] Keep `src/data/truedata_feed.py` as optional standby feed; add integration hooks only when needed.
 - [x] Add cron-ready daily maintenance workflow (`scripts/daily_maintenance.py` + `config/cron/daily_maintenance.crontab.example`).
 - [x] Implement composite-key dedup support in `DataStore` for option-chain persistence (`timestamp + expiry + strike + option_type`).
-- [ ] Add `paper_fills` daily P&L/reporting script (fills, fees, gross/net by day/strategy).
-- [ ] **Visual review step:** run replay notebook/report and manually verify regime labels vs chart context before strategy comparisons.
+- [x] Add `paper_fills` daily P&L/reporting script (`scripts/paper_fills_report.py`) for fills/fees/gross/net by day and strategy.
+- [x] Add replay-based visual review artifact generator (`scripts/regime_visual_review.py`) producing CSV + chart + HTML + checklist.
+- [ ] **Visual review step:** run the generated artifact and manually verify regime labels vs chart context before strategy comparisons.
 
 ### Required To Proceed To Phase 6 Completion
 - [x] Add/confirm hysteresis + smoothing behavior tests in classifier to reduce flip-flops in transition zone.
@@ -65,8 +66,8 @@
 - [x] Run an end-to-end dry replay path that logs regime transitions and supports sanity validation (`scripts/replay_regime.py`).
 - [x] Replace placeholder option-chain inputs in paper runtime with live Kite chain snapshots.
 - [x] Implement option-chain persistence with composite-key dedup (timestamp + expiry + strike + option_type) before historical chain backtests.
-- [ ] Add a Kite-backed paper-loop acceptance runbook (open, intraday, close checks).
-- [ ] Convert replay outputs into final notebook artifact for visual inspection (optional packaging task; not a code blocker).
+- [x] Add a Kite-backed paper-loop acceptance runbook (open, intraday, close checks).
+- [x] Convert replay outputs into final visual-review artifact package (CSV + chart + HTML + checklist via script).
 
 ---
 
@@ -635,6 +636,36 @@ it works, when it works, and when it doesn't.
      - If you can't sit through a ₹15,000 paper loss without wanting to
        override the bot, you're not ready for live trading
 ```
+
+### Paper-Loop Acceptance Runbook (Kite-backed)
+
+Use this checklist each paper-trading day:
+
+1. Pre-open (08:55–09:10 IST)
+   - Run `python scripts/health_check.py --quick`
+   - Verify Kite token/session is valid and quote smoke checks pass
+   - Confirm latest cache metadata exists (`data/cache/metadata.json`)
+
+2. Open window (09:15–09:30 IST)
+   - Start paper loop and verify logs show:
+     - regime value updates
+     - `chain_rows > 0` and valid `chain_expiry`
+     - no repeated data-unavailable errors
+
+3. Intraday checkpoint (12:30 IST)
+   - Verify new fills are being persisted under `paper_fills`
+   - Run `python scripts/paper_fills_report.py --symbol NIFTY`
+   - Check daily gross/net/fees and strategy-level fill counts
+
+4. Post-close (15:45+ IST)
+   - Run `python scripts/daily_maintenance.py --days 2 --symbols NIFTY,BANKNIFTY --timeframes 1d,5m --strict-quality`
+   - Re-run `paper_fills_report.py` for end-of-day snapshot
+   - Store report artifacts in `data/reports` for weekly review
+
+5. Escalation rules
+   - If option-chain fetch fails continuously for > 3 loops: stop paper loop and investigate data path
+   - If quality report fails in strict mode: do not trust next-day signals until resolved
+   - If paper metrics diverge from backtest bands for 5+ consecutive sessions: trigger strategy review
 
 ### Definition of Done
 50+ paper trades completed over 4+ weeks. Paper results are statistically

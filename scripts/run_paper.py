@@ -13,7 +13,6 @@ import signal
 import sys
 import time
 import traceback
-from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -44,35 +43,11 @@ from src.regime import (
 from src.signals.regime import build_regime_signals
 from src.strategies.iron_condor import IronCondorStrategy
 from src.strategies.momentum import MomentumStrategy
-from src.strategies.base import BaseStrategy, RegimeState, Signal, SignalType
+from src.strategies.base import BaseStrategy
 from src.strategies.regime_probe import RegimeProbeStrategy
 from src.strategies.router import StrategyRouter
 
 OPTION_CHAIN_DEDUP_COLS = ["timestamp", "expiry", "strike", "option_type"]
-
-
-@dataclass
-class NoOpStrategy(BaseStrategy):
-    """Placeholder strategy for activation-routing testing."""
-
-    def __init__(self, name: str, config: dict):
-        super().__init__(name=name, config=config)
-
-    def generate_signal(self, market_data: dict, regime: RegimeState) -> Signal:
-        return Signal(
-            signal_type=SignalType.NO_SIGNAL,
-            strategy_name=self.name,
-            instrument=self.config.get("instrument", "NIFTY"),
-            timestamp=market_data.get("timestamp", datetime.now(UTC).replace(tzinfo=None)),
-            regime=regime,
-            reason="No-op paper scaffold strategy",
-        )
-
-    def get_exit_conditions(self, market_data: dict) -> Signal | None:
-        return None
-
-    def compute_position_size(self, capital: float, risk_per_trade: float) -> int:
-        return 0
 
 
 def parse_args() -> argparse.Namespace:
@@ -96,6 +71,7 @@ def load_settings(path: str) -> dict:
 def build_strategies(settings: dict) -> list[BaseStrategy]:
     strategies_cfg = settings.get("strategies", {})
     strategies: list[BaseStrategy] = []
+    unknown_enabled: list[str] = []
     for name, cfg in strategies_cfg.items():
         if not cfg.get("enabled", False):
             continue
@@ -106,7 +82,15 @@ def build_strategies(settings: dict) -> list[BaseStrategy]:
         elif name == "regime_probe":
             strategies.append(RegimeProbeStrategy(name=name, config=cfg))
         else:
-            strategies.append(NoOpStrategy(name=name, config=cfg))
+            unknown_enabled.append(name)
+
+    if unknown_enabled:
+        known = ["regime_probe", "momentum", "iron_condor"]
+        raise ValueError(
+            "Unknown enabled strategy id(s): "
+            f"{', '.join(sorted(unknown_enabled))}. "
+            f"Known strategy ids: {', '.join(known)}"
+        )
     return strategies
 
 

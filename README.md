@@ -170,6 +170,12 @@ python scripts/run_live.py --strategy iron_condor --capital 200000
 # Run ad-hoc daily workflow now
 python scripts/daily_maintenance.py --days 2 --symbols NIFTY,BANKNIFTY --timeframes 1d,5m
 
+# Generate daily paper fills P&L summary (gross/net/fees by strategy)
+python scripts/paper_fills_report.py --symbol NIFTY
+
+# Generate visual regime-review artifact bundle (CSV + PNG + HTML + checklist)
+python scripts/regime_visual_review.py --symbol NIFTY --timeframe 1d --days 365
+
 # Install the sample crontab (edit repo path first if needed)
 crontab config/cron/daily_maintenance.crontab.example
 ```
