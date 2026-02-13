@@ -53,6 +53,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--settings", default="config/settings.yaml", help="Settings YAML path")
     parser.add_argument("--output-dir", default="data/reports", help="Directory for output artifacts")
     parser.add_argument("--run-name", default="regime_review", help="Prefix for output filenames")
+    parser.add_argument(
+        "--no-timestamp-subdir",
+        action="store_true",
+        help="Write artifacts directly in --output-dir instead of run timestamp subfolder.",
+    )
     return parser.parse_args()
 
 
@@ -192,13 +197,27 @@ def _write_checklist(*, review_csv: Path, chart_png: Path, html_report: Path, ou
     out_path.write_text(content)
 
 
+def resolve_output_dir(*, raw_output_dir: str, run_prefix: str, no_timestamp_subdir: bool) -> Path:
+    base = Path(raw_output_dir)
+    if not base.is_absolute():
+        base = REPO_ROOT / base
+    if no_timestamp_subdir:
+        return base
+    stamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
+    return base / f"{run_prefix}_{stamp}"
+
+
 def main() -> int:
     args = parse_args()
     settings = load_settings(args.settings)
     load_start, analysis_start, end = resolve_windows(args)
 
     cache_dir = REPO_ROOT / settings.get("data", {}).get("cache_dir", "data/cache")
-    output_dir = REPO_ROOT / args.output_dir
+    output_dir = resolve_output_dir(
+        raw_output_dir=args.output_dir,
+        run_prefix=f"{args.run_name}_{args.symbol}_{args.timeframe}",
+        no_timestamp_subdir=args.no_timestamp_subdir,
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
 
     store = DataStore(base_dir=str(cache_dir))
@@ -231,8 +250,7 @@ def main() -> int:
         candles_for_review = candles_for_review.loc[candles_for_review["timestamp"] >= pd.Timestamp(analysis_start)]
     review = build_visual_review_frame(candles=candles_for_review, snapshots=replay.snapshots)
 
-    stamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
-    prefix = f"{args.run_name}_{args.symbol}_{args.timeframe}_{stamp}"
+    prefix = f"{args.run_name}_{args.symbol}_{args.timeframe}"
     review_csv = output_dir / f"{prefix}_review.csv"
     transitions_csv = output_dir / f"{prefix}_transitions.csv"
     chart_png = output_dir / f"{prefix}_chart.png"
@@ -278,6 +296,7 @@ def main() -> int:
     print(f"load_window={load_start.date() if load_start else 'begin'} -> {end.date() if end else 'latest'}")
     print(f"analysis_window={analysis_start.date() if analysis_start else 'begin'} -> {end.date() if end else 'latest'}")
     print(f"indicator_warmup_days={args.indicator_warmup_days}")
+    print(f"output_dir={output_dir.relative_to(REPO_ROOT)}")
     print(f"review_csv={review_csv.relative_to(REPO_ROOT)}")
     print(f"transitions_csv={transitions_csv.relative_to(REPO_ROOT)}")
     print(f"chart_png={chart_png.relative_to(REPO_ROOT)}")

@@ -123,6 +123,7 @@ class CircuitBreaker:
         realized_pnl_today: float,
         unrealized_pnl: float = 0.0,
         open_positions: int = 0,
+        timestamp: datetime | None = None,
     ):
         """
         Called on every tick or position update.
@@ -134,7 +135,8 @@ class CircuitBreaker:
             self.open_position_count = int(open_positions)
 
             # Reset daily tracking if new day in trading timezone.
-            today = self._today()
+            # In historical backtests, pass bar timestamp so daily limits reset per bar-date.
+            today = self._today(as_of=timestamp)
             if today != self.daily_pnl.date:
                 self._reset_daily(today=today)
 
@@ -307,12 +309,21 @@ class CircuitBreaker:
     def __repr__(self) -> str:
         return f"<CircuitBreaker [{self.state.value}] equity={self.current_equity:.0f} dd={self.status()['drawdown_pct']:.1f}%>"
 
-    def _today(self) -> date:
+    def _today(self, *, as_of: datetime | None = None) -> date:
         try:
-            return datetime.now(ZoneInfo(self.trading_timezone)).date()
+            zone = ZoneInfo(self.trading_timezone)
+            if as_of is None:
+                return datetime.now(zone).date()
+            if as_of.tzinfo is None:
+                return as_of.replace(tzinfo=zone).date()
+            return as_of.astimezone(zone).date()
         except Exception:
             logger.warning("Invalid trading timezone, falling back to UTC", trading_timezone=self.trading_timezone)
-            return datetime.now(ZoneInfo("UTC")).date()
+            if as_of is None:
+                return datetime.now(ZoneInfo("UTC")).date()
+            if as_of.tzinfo is None:
+                return as_of.date()
+            return as_of.astimezone(ZoneInfo("UTC")).date()
 
     def _load_state(self) -> bool:
         if not self.state_path:

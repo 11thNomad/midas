@@ -368,3 +368,65 @@ def test_engine_analysis_start_keeps_warmup_candle_history_context():
     )
     engine.run(candles=candles, analysis_start=datetime(2026, 1, 3))
     assert strategy.lengths == [2, 3]
+
+
+def test_engine_allows_exit_when_circuit_breaker_blocks_new_trades():
+    candles = pd.DataFrame(
+        {
+            "timestamp": pd.date_range("2026-01-01", periods=1, freq="D"),
+            "open": [100],
+            "high": [101],
+            "low": [99],
+            "close": [100],
+        }
+    )
+
+    class ExitOnlyStrategy(BaseStrategy):
+        def __init__(self, name: str, config: dict):
+            super().__init__(name, config)
+            self.state.current_position = {"symbol": "NIFTY", "quantity": 1}
+
+        def generate_signal(self, market_data: dict, regime: RegimeState) -> Signal:
+            return Signal(
+                signal_type=SignalType.NO_SIGNAL,
+                strategy_name=self.name,
+                instrument="NIFTY",
+                timestamp=market_data["timestamp"],
+                regime=regime,
+            )
+
+        def get_exit_conditions(self, market_data: dict) -> Signal | None:
+            return Signal(
+                signal_type=SignalType.EXIT,
+                strategy_name=self.name,
+                instrument="NIFTY",
+                timestamp=market_data["timestamp"],
+                orders=[{"symbol": "NIFTY", "action": "SELL", "quantity": 1}],
+                regime=RegimeState.LOW_VOL_RANGING,
+            )
+
+        def compute_position_size(self, capital: float, risk_per_trade: float) -> int:
+            return 1
+
+    class HaltedBreaker:
+        def can_trade(self) -> bool:
+            return False
+
+        def update(self, **kwargs):  # noqa: ANN003 - simple test double
+            return None
+
+    strategy = ExitOnlyStrategy(
+        name="exit_only",
+        config={"instrument": "NIFTY", "active_regimes": [RegimeState.LOW_VOL_RANGING.value]},
+    )
+    engine = BacktestEngine(
+        classifier=RegimeClassifier(thresholds=RegimeThresholds()),
+        strategy=strategy,
+        simulator=FillSimulator(slippage_pct=0.0, commission_per_order=0.0),
+        initial_capital=1000.0,
+        circuit_breaker=HaltedBreaker(),  # type: ignore[arg-type]
+    )
+
+    result = engine.run(candles=candles)
+    assert len(result.fills) == 1
+    assert result.fills.iloc[0]["side"] == "SELL"

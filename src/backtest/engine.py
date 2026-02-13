@@ -129,7 +129,11 @@ class BacktestEngine:
 
             fill_reference_price = open_price if self.fill_on == "open" else close_price
             can_trade = self.circuit_breaker.can_trade() if self.circuit_breaker is not None else True
-            if signal is not None and signal.is_actionable and can_trade:
+            if signal is not None and signal.is_actionable:
+                is_exit = signal.signal_type == SignalType.EXIT
+                if not can_trade and not is_exit:
+                    # Circuit-breaker halt blocks new entries/adjustments, but exits must still be allowed.
+                    continue
                 if signal.signal_type == SignalType.EXIT and not signal.orders:
                     net_qty = int(positions.get(signal.instrument, 0))
                     signal.orders = [
@@ -193,6 +197,7 @@ class BacktestEngine:
                     realized_pnl_today=realized_pnl_today,
                     unrealized_pnl=unrealized_pnl,
                     open_positions=open_positions,
+                    timestamp=ts,
                 )
 
         fills_df = pd.DataFrame(fill_rows)

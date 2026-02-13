@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from src.risk.circuit_breaker import BreakerState, CircuitBreaker
 
@@ -118,3 +118,34 @@ def test_circuit_breaker_concurrent_updates_keep_valid_state():
         BreakerState.TRIPPED_DAILY,
         BreakerState.TRIPPED_DRAWDOWN,
     }
+
+
+def test_circuit_breaker_uses_provided_timestamp_for_daily_rollover():
+    breaker = CircuitBreaker(
+        initial_capital=100000.0,
+        max_daily_loss_pct=5.0,
+        max_drawdown_pct=25.0,
+        auto_reset_daily_trip=True,
+    )
+    breaker.state = BreakerState.TRIPPED_DAILY
+
+    day_one = datetime(2026, 1, 5, 10, 0, 0)
+    day_two = datetime(2026, 1, 6, 10, 0, 0)
+    breaker.daily_pnl.date = day_one.date()
+
+    breaker.update(
+        current_equity=99500.0,
+        realized_pnl_today=-500.0,
+        open_positions=0,
+        timestamp=day_one,
+    )
+    assert breaker.state == BreakerState.TRIPPED_DAILY
+
+    breaker.update(
+        current_equity=99800.0,
+        realized_pnl_today=-100.0,
+        open_positions=0,
+        timestamp=day_two,
+    )
+    assert breaker.daily_pnl.date == day_two.date()
+    assert breaker.state == BreakerState.NORMAL

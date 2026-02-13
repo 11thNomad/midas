@@ -71,6 +71,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sensitivity", action="store_true", help="Run parameter sensitivity variants (default: from settings)")
     parser.add_argument("--settings", default="config/settings.yaml", help="Settings file path")
     parser.add_argument("--output-dir", default="data/reports", help="Report output directory")
+    parser.add_argument(
+        "--no-timestamp-subdir",
+        action="store_true",
+        help="Write artifacts directly in --output-dir instead of run timestamp subfolder.",
+    )
     return parser.parse_args()
 
 
@@ -452,6 +457,16 @@ def _run_strategy(
     )
 
 
+def resolve_output_dir(*, raw_output_dir: str, run_prefix: str, no_timestamp_subdir: bool) -> Path:
+    base = Path(raw_output_dir)
+    if not base.is_absolute():
+        base = REPO_ROOT / base
+    if no_timestamp_subdir:
+        return base
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return base / f"{run_prefix}_{stamp}"
+
+
 def main() -> int:
     args = parse_args()
     settings = load_settings(args.settings)
@@ -485,8 +500,14 @@ def main() -> int:
         sebi_fee_pct=float(backtest_cfg.get("sebi_fee_pct", 0.0001) or 0.0001),
         stamp_duty_pct=float(backtest_cfg.get("stamp_duty_pct", 0.003) or 0.003),
     )
-    output_dir = str(REPO_ROOT / args.output_dir)
-    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    run_prefix = "walkforward" if args.walk_forward else "backtest"
+    output_dir_path = resolve_output_dir(
+        raw_output_dir=args.output_dir,
+        run_prefix=run_prefix,
+        no_timestamp_subdir=args.no_timestamp_subdir,
+    )
+    output_dir_path.mkdir(parents=True, exist_ok=True)
+    output_dir = str(output_dir_path)
 
     periods_per_year = 252 if args.timeframe == "1d" else 252 * 75
     risk_free_rate_annual = float(backtest_cfg.get("risk_free_rate_annual", 0.07) or 0.07)
@@ -502,6 +523,7 @@ def main() -> int:
     print("=" * 72)
     print(f"symbols={symbols} timeframe={args.timeframe} start={start.date()} end={end.date()}")
     print(f"load_start={load_start.date()} indicator_warmup_days={args.indicator_warmup_days}")
+    print(f"output_dir={output_dir_path}")
     print(f"strategies={strategy_ids}")
     print(f"walk_forward={args.walk_forward} sensitivity={sensitivity_enabled}")
 
