@@ -19,8 +19,7 @@ A modular algorithmic trading system for Indian markets (NSE), focused on Nifty 
                │                      │
 ┌──────────────▼──────────────────────▼───────────────────┐
 │                    DATA LAYER                            │
-│         TrueData (market data + historical)              │
-│         jugaad-data / openchart (free fallback)          │
+│         Kite Connect + NSE companion datasets            │
 └──────────────┬──────────────────────────────────────────┘
                │
 ┌──────────────▼──────────────────────────────────────────┐
@@ -51,9 +50,8 @@ nifty-quant/
 │   │
 │   ├── data/                 # Data layer — fetching + storage
 │   │   ├── __init__.py
-│   │   ├── truedata_feed.py  # TrueData API wrapper (live + historical)
-│   │   ├── kite_feed.py      # Kite historical data (backup/supplement)
-│   │   ├── free_feed.py      # jugaad-data / openchart (free fallback)
+│   │   ├── kite_feed.py      # Kite API wrapper (historical + live snapshots)
+│   │   ├── fii.py            # NSE FII/DII data pipeline
 │   │   ├── store.py          # Local data storage (SQLite/Parquet)
 │   │   └── schemas.py        # Data models — Candle, OptionChain, Greeks
 │   │
@@ -123,7 +121,6 @@ nifty-quant/
 
 ### Prerequisites
 - Python 3.11+
-- TrueData subscription (market data)
 - Zerodha account with Kite Connect API access (execution)
 
 ### Installation
@@ -159,7 +156,7 @@ jupyter lab notebooks/01_data_exploration.ipynb
 python scripts/run_backtest.py --strategy iron_condor --from 2023-01-01 --to 2025-01-01
 
 # 5. Paper trade
-python scripts/run_paper.py --strategy iron_condor
+python scripts/run_paper.py --symbol NIFTY --timeframe 5m --iterations 20 --sleep-seconds 30
 
 # 6. Only after validating paper results — go live
 python scripts/run_live.py --strategy iron_condor --capital 200000
@@ -167,7 +164,7 @@ python scripts/run_live.py --strategy iron_condor --capital 200000
 
 ## Design Principles
 
-1. **Data and execution are strictly separated.** TrueData feeds data, Kite executes.
+1. **Data and execution are strictly separated.** Kite data feed and Kite execution are distinct layers.
    Never mix these concerns.
 
 2. **Every strategy inherits from `base.py`.** Enforces a consistent interface:

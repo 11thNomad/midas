@@ -8,6 +8,7 @@ Examples:
 from __future__ import annotations
 
 import argparse
+import os
 import signal
 import sys
 import time
@@ -19,10 +20,16 @@ from pathlib import Path
 import pandas as pd
 import yaml
 
+try:
+    from dotenv import load_dotenv
+except ImportError:  # pragma: no cover - optional in some environments
+    load_dotenv = None
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from src.data.free_feed import DataUnavailableError, FreeFeed
+from src.data.fii import FiiDownloadError, fetch_fii_dii
+from src.data.kite_feed import KiteFeed, KiteFeedError
 from src.data.store import DataStore
 from src.execution import PaperExecutionEngine
 from src.risk.circuit_breaker import CircuitBreaker
@@ -103,7 +110,7 @@ def build_strategies(settings: dict) -> list[BaseStrategy]:
 def _load_or_fetch_candles(
     *,
     store: DataStore,
-    feed: FreeFeed,
+    feed: KiteFeed,
     symbol: str,
     timeframe: str,
     start: datetime,
@@ -126,7 +133,7 @@ def _load_or_fetch_candles(
     return fetched
 
 
-def _load_or_fetch_vix(*, store: DataStore, feed: FreeFeed, start: datetime, end: datetime) -> pd.DataFrame:
+def _load_or_fetch_vix(*, store: DataStore, feed: KiteFeed, start: datetime, end: datetime) -> pd.DataFrame:
     vix = store.read_time_series("vix", symbol="INDIAVIX", timeframe="1d", start=start, end=end)
     if not vix.empty:
         return vix
@@ -137,7 +144,7 @@ def _load_or_fetch_vix(*, store: DataStore, feed: FreeFeed, start: datetime, end
     return fetched
 
 
-def _load_or_fetch_fii(*, store: DataStore, feed: FreeFeed, start: datetime, end: datetime) -> pd.DataFrame:
+def _load_or_fetch_fii(*, store: DataStore, start: datetime, end: datetime) -> pd.DataFrame:
     fii = store.read_time_series(
         "fii_dii",
         symbol="NSE",
@@ -148,7 +155,7 @@ def _load_or_fetch_fii(*, store: DataStore, feed: FreeFeed, start: datetime, end
     )
     if not fii.empty:
         return fii
-    fetched = feed.get_fii_data(start=start, end=end)
+    fetched = fetch_fii_dii(start=start, end=end)
     if fetched.empty:
         return fetched
     store.write_time_series(
@@ -157,12 +164,15 @@ def _load_or_fetch_fii(*, store: DataStore, feed: FreeFeed, start: datetime, end
         symbol="NSE",
         timeframe="1d",
         timestamp_col="date",
-        source=feed.name,
+        source="nse",
     )
     return fetched
 
 
 def main() -> int:
+    if load_dotenv:
+        load_dotenv(REPO_ROOT / ".env")
+
     args = parse_args()
     settings = load_settings(args.settings)
 
@@ -170,7 +180,13 @@ def main() -> int:
     now = datetime.now(UTC).replace(tzinfo=None)
     start = now - timedelta(days=args.lookback_days)
 
-    feed = FreeFeed(data_root=str(REPO_ROOT / "data"))
+    api_key = os.getenv("KITE_API_KEY", "").strip()
+    access_token = os.getenv("KITE_ACCESS_TOKEN", "").strip()
+    if not api_key or not access_token:
+        print("[FAIL] Missing Kite credentials. Set KITE_API_KEY and KITE_ACCESS_TOKEN in .env.")
+        return 1
+
+    feed = KiteFeed(api_key=api_key, access_token=access_token)
     store = DataStore(base_dir=str(cache_dir))
     classifier = RegimeClassifier(thresholds=RegimeThresholds.from_config(settings.get("regime", {})))
     router = StrategyRouter(strategies=build_strategies(settings))
@@ -233,7 +249,7 @@ def main() -> int:
                 continue
 
             vix = _load_or_fetch_vix(store=store, feed=feed, start=start, end=loop_ts)
-            fii = _load_or_fetch_fii(store=store, feed=feed, start=start, end=loop_ts)
+            fii = _load_or_fetch_fii(store=store, start=start, end=loop_ts)
 
             vix_series = vix["close"].astype("float64") if not vix.empty and "close" in vix.columns else None
             vix_value = float(vix_series.iloc[-1]) if vix_series is not None and not vix_series.empty else 0.0
@@ -272,7 +288,7 @@ def main() -> int:
                 f"transition_signals={len(transition_signals)} strategy_signals={len(strategy_signals)} "
                 f"fills={len(fills)}"
             )
-        except DataUnavailableError as exc:
+        except (KiteFeedError, FiiDownloadError) as exc:
             print(f"[{i + 1}/{args.iterations}] data unavailable: {exc}")
         except Exception as exc:
             print(f"[{i + 1}/{args.iterations}] error: {exc}")

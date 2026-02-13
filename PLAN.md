@@ -32,27 +32,36 @@
 
 ---
 
-## Current Status Checkpoint (Updated: 2026-02-12)
+## Current Status Checkpoint (Updated: 2026-02-13)
 
 ### Active Phase
-- **Current implementation phase:** Phase 4-ready (Phase 3 implementation gate complete) with early Phase 6 paper-runtime scaffolding.
-- **Interpretation:** Core signal + regime plumbing + replay validation are complete in code. Next major build is Phase 4 backtesting engine.
+- **Current implementation phase:** Phase 6 integration (paper runtime + live-feed wiring), with Phases 1-5 implemented in code and tests.
+- **Interpretation:** Core data contracts, signal/regime stack, backtest engine, and baseline strategies are in place. Immediate next build is real Kite option-chain integration in paper runtime.
 
 ### What Is Already Covered
 - [x] Phase 1 core data interfaces (`DataFeed`, store, quality checks, DTO contracts + normalization wiring)
 - [x] Phase 2 signal library modules + unit tests (including IV surface change signals)
 - [x] Phase 3 baseline classifier + overrides + snapshot persistence + strategy activation router
+- [x] Phase 4 backtest stack (`scripts/run_backtest.py`) with walk-forward, anti-overfitting checks, and report generation scaffolding
+- [x] Phase 5 initial strategy set in code (`iron_condor`, `momentum`, `regime_probe`) with unit coverage
 - [x] Paper runtime scaffold (`scripts/run_paper.py`) with persisted regime snapshots/transitions
+- [x] Current automated test baseline green (`78 passed`)
 
 ### Immediate TODOs (Added)
-- [ ] Replace `NoOpStrategy` in `scripts/run_paper.py` with real strategy classes as they are implemented.
+- [ ] **Next step:** wire real Kite option-chain snapshots into `scripts/run_paper.py` (`chain_df` and `previous_chain_df` instead of placeholders).
+- [ ] Replace remaining `NoOpStrategy` usage in `scripts/run_paper.py` with explicit strategy classes or fail-fast config validation.
+- [x] Move paper/runtime and historical ingest paths to Kite-only provider wiring (`scripts/run_paper.py`, `scripts/download_historical.py`).
+- [x] Replace multi-provider health check with Kite-focused checks (auth/profile + quote smoke checks).
+- [ ] Remove legacy `src/data/free_feed.py` and `src/data/truedata_feed.py` modules after confirming no downstream imports.
 - [ ] Add `paper_fills` daily P&L/reporting script (fills, fees, gross/net by day/strategy).
 - [ ] **Visual review step:** run replay notebook/report and manually verify regime labels vs chart context before strategy comparisons.
 
-### Required To Proceed To Phase 4
+### Required To Proceed To Phase 6 Completion
 - [x] Add/confirm hysteresis + smoothing behavior tests in classifier to reduce flip-flops in transition zone.
 - [x] Prove strict no-lookahead regime computation path for historical replay.
 - [x] Run an end-to-end dry replay path that logs regime transitions and supports sanity validation (`scripts/replay_regime.py`).
+- [ ] Replace placeholder option-chain inputs in paper runtime with live Kite chain snapshots.
+- [ ] Add a Kite-backed paper-loop acceptance runbook (open, intraday, close checks).
 - [ ] Convert replay outputs into final notebook artifact for visual inspection (optional packaging task; not a code blocker).
 
 ---
@@ -63,7 +72,7 @@
 
 A personal, modular algorithmic trading system that:
 
-- Ingests market data from multiple sources (free and paid)
+- Ingests market data from Kite Connect + NSE public datasets
 - Maintains a library of composable signals and indicators
 - Classifies market regimes to decide *when* to trade, not just *what* to trade
 - Backtests strategies with realistic cost modeling and walk-forward validation
@@ -102,8 +111,8 @@ A personal, modular algorithmic trading system that:
 - [ ] Repository initialized, pushed to private GitHub
 - [ ] Python 3.11+ virtual environment with all dependencies installed
 - [ ] `.env` configured with API credentials
-- [ ] `health_check.py` passing for all services
-- [ ] Basic familiarity with TrueData and Kite Connect APIs
+- [ ] `health_check.py` passing for Kite + core dependencies
+- [ ] Basic familiarity with Kite Connect REST/WebSocket flows
 
 ### Tasks
 
@@ -113,12 +122,12 @@ A personal, modular algorithmic trading system that:
      - Install dependencies: pip install -e ".[dev]"
      - Verify: python scripts/health_check.py
 
-0.2  TrueData setup
-     - Subscribe to TrueData (Market Data API plan)
-     - Install their Python SDK
-     - Test: fetch 5 days of NIFTY 1-min candles
-     - Test: fetch current NIFTY option chain with Greeks
-     - Document any quirks (rate limits, symbol formats, timezone handling)
+0.2  Kite market-data setup
+     - Verify Kite Connect app setup (API key/secret + redirect URL)
+     - Complete auth flow and persist access token
+     - Test: fetch 5 days of NIFTY 1-min/5-min candles
+     - Test: fetch current NIFTY option-chain snapshot
+     - Document quirks (rate limits, symbol mapping, timezone handling)
 
 0.3  Zerodha Kite Connect setup
      - Ensure F&O segment is activated on your Zerodha account
@@ -129,28 +138,25 @@ A personal, modular algorithmic trading system that:
        (Kite tokens expire daily — needs login redirect each morning)
      - Test: fetch account margins and holdings
 
-0.4  Free data source validation
-     - Test jugaad-data: download NIFTY F&O bhavcopy for past month
-     - Test openchart: download NIFTY 5-min intraday candles for past week
-     - Test yfinance: download NIFTY 50 daily data for past 3 years
-     - Document data formats, gaps, and limitations of each source
+0.4  NSE companion datasets
+     - Test NSE India VIX historical pulls
+     - Test NSE FII/DII flow pulls
+     - Document format quirks and retry rules
 
 0.5  Notebook environment
      - Verify JupyterLab launches
-     - Create 01_data_exploration.ipynb with basic TrueData + free data pulls
+     - Create 01_data_exploration.ipynb with Kite + NSE pulls
      - Plot sample NIFTY candle chart to confirm data pipeline works end-to-end
 ```
 
 ### Definition of Done
-You can run a single Python script that fetches live NIFTY data from TrueData,
-fetches historical data from jugaad-data, and places a test order (immediately
-cancelled) on Zerodha's paper trading mode. All three external services are
-confirmed working.
+You can run a single Python script that fetches NIFTY data via Kite APIs,
+pulls NSE companion datasets (VIX + FII/DII), and places a test order
+(immediately cancelled) on Zerodha's paper trading mode.
 
 ### Estimated cost
-- TrueData: ~₹1,500–3,000/month
 - Kite Connect: ₹2,000 one-time
-- Total Phase 0: ~₹4,000–5,000
+- Total Phase 0: ~₹2,000 (+ optional infra costs)
 
 ---
 
@@ -175,9 +181,8 @@ confirmed working.
        - get_option_chain(symbol, expiry, timestamp) -> OptionChain
        - get_vix(start, end) -> DataFrame
        - get_fii_data(start, end) -> DataFrame
-     - Implement TrueDataFeed (primary, paid)
-     - Implement FreeFeed (jugaad-data + openchart + yfinance fallback)
-     - Implement KiteFeed (supplementary, for instruments you've traded)
+     - Implement KiteFeed (primary candles + option chain)
+     - Implement NSE companion pipeline for FII/DII and validation
 
 1.2  Historical data downloader (scripts/download_historical.py)
      - Bulk download NIFTY and BANKNIFTY daily candles (3–5 years)
@@ -199,7 +204,7 @@ confirmed working.
      - Detect and log gaps (missing trading days, missing candles)
      - Validate OHLC integrity (high >= open/close, low <= open/close)
      - Flag truncated trading days (Muhurat, early closes)
-     - Compare free data vs TrueData for a sample period to quantify differences
+     - Validate replay reproducibility from cached parquet snapshots
      - Create a data quality report notebook (02_data_quality.ipynb)
 
 1.5  FII/DII flow pipeline
@@ -211,14 +216,11 @@ confirmed working.
 
 ### Data Sources Summary
 
-| Source        | Cost         | What it provides                          | Historical depth |
-|---------------|-------------|-------------------------------------------|-----------------|
-| TrueData      | ₹1.5–3K/mo  | Tick/1min/5min candles, option chain, Greeks | Varies by plan  |
-| jugaad-data   | Free         | Daily EOD, F&O bhavcopy, live quotes       | 2015+           |
-| openchart     | Free         | 1min/5min intraday candles                 | ~30 days        |
-| yfinance      | Free         | Daily OHLCV for indices                    | 10+ years       |
-| NSE website   | Free         | VIX, FII/DII flows, option chain snapshots | Varies          |
-| NSE data shop | ₹10K+ once   | Full tick-by-tick, complete option history  | Comprehensive   |
+| Source        | Cost         | What it provides                            | Historical depth |
+|---------------|-------------|---------------------------------------------|-----------------|
+| Kite Connect  | Paid app     | Intraday/daily candles, live quotes, option chain snapshots | Broker-limited by endpoint |
+| NSE website   | Free         | India VIX, FII/DII flows, reference datasets | Varies          |
+| NSE data shop | ₹10K+ once   | Full tick-by-tick, complete option history    | Comprehensive   |
 
 ### Key decision: How far back?
 
@@ -592,7 +594,7 @@ it works, when it works, and when it doesn't.
      - Logs every signal, order, and fill identically to live
 
 6.2  Live data integration
-     - TrueData real-time WebSocket feed for live candles
+     - Kite real-time WebSocket feed for live ticks/candles
      - Live option chain with Greeks (refreshed every 30 seconds or tick)
      - Live India VIX
      - Regime classifier running on live data
@@ -780,8 +782,8 @@ and execution layer swap out:
 
 ```
 Backtest:  HistoricalDataFeed + BacktestSimulator
-Paper:     TrueDataLiveFeed   + PaperExecutor
-Live:      TrueDataLiveFeed   + KiteBroker
+Paper:     KiteDataFeed       + PaperExecutor
+Live:      KiteDataFeed       + KiteBroker
 ```
 
 This eliminates an entire class of "works in backtest but not live" bugs.
@@ -800,7 +802,7 @@ This trade journal is your most valuable asset for learning what works.
 
 ### 5. Fail safe, not fail open
 
-- If TrueData disconnects → stop generating signals (don't trade on stale data)
+- If Kite market-data stream disconnects or goes stale → stop generating new signals
 - If Kite API errors → retry 3 times, then alert and stop
 - If regime is UNKNOWN → no trades
 - If circuit breaker state is unclear → assume tripped
@@ -1028,10 +1030,10 @@ parameter changes require a config file edit, git commit, and redeployment.
 Drawdowns are handled by the circuit breaker, not by you.
 
 ### 7. Data integrity issues
-**Why it's dangerous:** Free data has gaps. Backtest looks great on clean
-data, fails on messy live data.
-**Mitigation:** TrueData (authorized vendor) for live and backtest data.
-Data quality checks in pipeline. Compare multiple sources.
+**Why it's dangerous:** Partial/missing snapshots or token mismatches corrupt
+signal quality and strategy behavior.
+**Mitigation:** Kite-only schema normalization, strict data quality checks,
+and immutable cached parquet snapshots for reproducible backtests.
 
 ### 8. SEBI regulatory changes
 **Why it's dangerous:** SEBI restricts weekly expiries, increases lot sizes,
@@ -1105,7 +1107,8 @@ Track major design decisions here as the project evolves.
 
 | Date | Decision | Rationale |
 |------|----------|-----------|
-| _start_ | Use TrueData + Kite Connect | TrueData = authorized data, Kite = dominant retail broker |
+| 2026-02-13 | Standardize on Kite-only market data | Single paid provider reduces divergence between paper/live and simplifies operations |
+| _start_ | Use TrueData + Kite Connect | Original multi-provider plan; now superseded by Kite-only decision above |
 | _start_ | Parquet for local storage | Fast columnar reads for backtesting, better than CSV or SQLite for time series |
 | _start_ | Regime-based strategy routing | Core thesis: knowing when NOT to trade is the real edge |
 | _start_ | Walk-forward validation required | Prevents overfitting; any strategy that only works in-sample is rejected |

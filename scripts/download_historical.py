@@ -8,16 +8,23 @@ Examples:
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import yaml
 
+try:
+    from dotenv import load_dotenv
+except ImportError:  # pragma: no cover - optional in some environments
+    load_dotenv = None
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from src.data.free_feed import DataFeedError, DataUnavailableError, FreeFeed
+from src.data.fii import FiiDownloadError, fetch_fii_dii
+from src.data.kite_feed import KiteFeed, KiteFeedError
 from src.data.store import DataStore
 
 
@@ -79,6 +86,9 @@ def resolve_plan(args: argparse.Namespace) -> tuple[list[str], list[str]]:
 
 
 def main() -> int:
+    if load_dotenv:
+        load_dotenv(REPO_ROOT / ".env")
+
     args = parse_args()
     settings = load_settings(args.settings)
 
@@ -86,7 +96,13 @@ def main() -> int:
     start, end = resolve_window(args, settings)
     symbols, timeframes = resolve_plan(args)
 
-    feed = FreeFeed(data_root=str(REPO_ROOT / "data"))
+    api_key = os.getenv("KITE_API_KEY", "").strip()
+    access_token = os.getenv("KITE_ACCESS_TOKEN", "").strip()
+    if not api_key or not access_token:
+        print("[FAIL] Missing Kite credentials. Set KITE_API_KEY and KITE_ACCESS_TOKEN in .env.")
+        return 1
+
+    feed = KiteFeed(api_key=api_key, access_token=access_token)
     store = DataStore(base_dir=str(REPO_ROOT / cache_dir))
 
     print("=" * 64)
@@ -115,7 +131,7 @@ def main() -> int:
                 )
                 print(f"  [OK] cached rows={rows}")
                 downloads += 1
-            except (DataUnavailableError, DataFeedError, ValueError) as exc:
+            except (KiteFeedError, ValueError) as exc:
                 failures += 1
                 print(f"  [FAIL] {exc}")
 
@@ -132,25 +148,25 @@ def main() -> int:
             )
             print(f"  [OK] cached rows={rows}")
             downloads += 1
-        except (DataUnavailableError, DataFeedError, ValueError) as exc:
+        except (KiteFeedError, ValueError) as exc:
             failures += 1
             print(f"  [FAIL] {exc}")
 
     if not args.skip_fii:
         print("\n[RUN] fii_dii daily")
         try:
-            fii = feed.get_fii_data(start=start, end=end)
+            fii = fetch_fii_dii(start=start, end=end)
             rows = store.write_time_series(
                 "fii_dii",
                 fii,
                 symbol="NSE",
                 timeframe="1d",
                 timestamp_col="date",
-                source=feed.name,
+                source="nse",
             )
             print(f"  [OK] cached rows={rows}")
             downloads += 1
-        except (DataUnavailableError, DataFeedError, ValueError) as exc:
+        except (FiiDownloadError, ValueError) as exc:
             failures += 1
             print(f"  [FAIL] {exc}")
 
