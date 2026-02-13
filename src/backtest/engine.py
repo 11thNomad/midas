@@ -33,6 +33,8 @@ class BacktestEngine:
     initial_capital: float = 1_000_000.0
     periods_per_year: int = 252
     risk_free_rate_annual: float = 0.07
+    monte_carlo_permutations: int = 200
+    minimum_trade_count: int = 50
     circuit_breaker: CircuitBreaker | None = None
     fill_on: str = "open"
 
@@ -55,6 +57,8 @@ class BacktestEngine:
                     fills=empty,
                     initial_capital=self.initial_capital,
                     risk_free_rate_annual=self.risk_free_rate_annual,
+                    monte_carlo_permutations=self.monte_carlo_permutations,
+                    minimum_trade_count=self.minimum_trade_count,
                 ),
             )
 
@@ -194,6 +198,8 @@ class BacktestEngine:
             initial_capital=self.initial_capital,
             periods_per_year=self.periods_per_year,
             risk_free_rate_annual=self.risk_free_rate_annual,
+            monte_carlo_permutations=self.monte_carlo_permutations,
+            minimum_trade_count=self.minimum_trade_count,
         )
         return BacktestResult(equity_curve=equity_df, fills=fills_df, regimes=regimes_df, metrics=metrics)
 

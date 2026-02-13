@@ -115,6 +115,7 @@ class RegimeClassifier:
     history: list[dict] = field(default_factory=list)
     snapshots: list[dict] = field(default_factory=list)
     _smoothed_adx: float | None = None
+    _last_timestamp: datetime | None = None
 
     def classify(self, signals: RegimeSignals) -> RegimeState:
         """
@@ -122,6 +123,7 @@ class RegimeClassifier:
 
         Returns the new regime state. If regime changed, logs the transition.
         """
+        self._last_timestamp = signals.timestamp
         self.previous_regime = self.current_regime
 
         if pd.isna(signals.india_vix) or pd.isna(signals.adx_14):
@@ -263,11 +265,14 @@ class RegimeClassifier:
             adx=signals.adx_14,
         )
 
-    def get_regime_duration_days(self) -> int | None:
+    def get_regime_duration_days(self, *, as_of: datetime | None = None) -> int | None:
         """How long has the current regime been active?"""
         if self.regime_since is None:
             return None
-        return (datetime.now() - self.regime_since).days
+        anchor = as_of or self._last_timestamp
+        if anchor is None:
+            return None
+        return (anchor - self.regime_since).days
 
     def get_context(self) -> dict[str, Any]:
         """Current regime context for logging and dashboards."""

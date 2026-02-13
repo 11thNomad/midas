@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
 import pandas as pd
 
 
@@ -74,6 +75,8 @@ def summarize_backtest(
     initial_capital: float,
     periods_per_year: int = 252,
     risk_free_rate_annual: float = 0.07,
+    monte_carlo_permutations: int = 200,
+    minimum_trade_count: int = 50,
 ) -> dict[str, float]:
     if equity_curve.empty:
         return {
@@ -82,7 +85,13 @@ def summarize_backtest(
             "total_return_pct": 0.0,
             "max_drawdown_pct": 0.0,
             "sharpe_ratio": 0.0,
+            "sortino_ratio": 0.0,
             "fill_count": 0.0,
+            "trade_count_estimate": 0.0,
+            "min_trade_count_required": float(minimum_trade_count),
+            "min_trade_count_pass": 0.0,
+            "monte_carlo_permutation_pvalue": 1.0,
+            "anti_overfit_pass": 0.0,
             "fees_paid": 0.0,
         }
 
@@ -90,6 +99,14 @@ def summarize_backtest(
     final_equity = float(equity.iloc[-1])
     total_return_pct = ((final_equity - float(initial_capital)) / float(initial_capital)) * 100.0
     fees_paid = float(fills["fees"].sum()) if not fills.empty and "fees" in fills.columns else 0.0
+    trade_count_estimate = _estimate_trade_count(fills)
+    min_trade_count_pass = 1.0 if trade_count_estimate >= int(minimum_trade_count) else 0.0
+    permutation_pvalue = monte_carlo_permutation_pvalue(
+        equity=equity,
+        periods_per_year=periods_per_year,
+        permutations=monte_carlo_permutations,
+    )
+    anti_overfit_pass = 1.0 if (min_trade_count_pass == 1.0 and permutation_pvalue <= 0.10) else 0.0
 
     return {
         "initial_capital": float(initial_capital),
@@ -119,6 +136,11 @@ def summarize_backtest(
         "win_rate_pct": float(_win_rate_pct(fills)),
         "profit_factor": float(_profit_factor(fills)),
         "fill_count": float(len(fills)),
+        "trade_count_estimate": float(trade_count_estimate),
+        "min_trade_count_required": float(minimum_trade_count),
+        "min_trade_count_pass": float(min_trade_count_pass),
+        "monte_carlo_permutation_pvalue": float(permutation_pvalue),
+        "anti_overfit_pass": float(anti_overfit_pass),
         "fees_paid": fees_paid,
     }
 
@@ -197,3 +219,57 @@ def _profit_factor(fills: pd.DataFrame) -> float:
     if gross_loss == 0:
         return 0.0
     return gross_profit / gross_loss
+
+
+def _estimate_trade_count(fills: pd.DataFrame) -> int:
+    if fills.empty:
+        return 0
+    required = {"timestamp", "strategy_name", "signal_type"}
+    if required.issubset(fills.columns):
+        signal_type = fills["signal_type"].astype(str).str.lower()
+        entry_rows = fills.loc[signal_type.isin(["entry_long", "entry_short"])].copy()
+        if not entry_rows.empty:
+            entry_rows["timestamp"] = pd.to_datetime(entry_rows["timestamp"], errors="coerce")
+            entry_rows = entry_rows.dropna(subset=["timestamp"])
+            if not entry_rows.empty:
+                return int(len(entry_rows[["timestamp", "strategy_name"]].drop_duplicates()))
+    return int(len(fills))
+
+
+def monte_carlo_permutation_pvalue(
+    *,
+    equity: pd.Series,
+    periods_per_year: int = 252,
+    permutations: int = 200,
+    seed: int = 42,
+) -> float:
+    if len(equity) < 4:
+        return 1.0
+    returns = equity.pct_change().dropna().astype("float64")
+    if returns.empty:
+        return 1.0
+    observed_calmar = _calmar_from_returns(returns, periods_per_year=periods_per_year)
+    if observed_calmar <= 0:
+        return 1.0
+
+    n = max(int(permutations), 1)
+    rng = np.random.default_rng(seed)
+    values = returns.to_numpy(copy=True)
+    at_or_above = 0
+    for _ in range(n):
+        shuffled = values[rng.permutation(len(values))]
+        candidate = _calmar_from_returns(pd.Series(shuffled), periods_per_year=periods_per_year)
+        if candidate >= observed_calmar:
+            at_or_above += 1
+    return float((at_or_above + 1) / (n + 1))
+
+
+def _calmar_from_returns(returns: pd.Series, *, periods_per_year: int) -> float:
+    if returns.empty:
+        return 0.0
+    equity = (1.0 + returns).cumprod()
+    ann = annualized_return_pct(equity, periods_per_year=periods_per_year) / 100.0
+    mdd = max_drawdown_pct(equity) / 100.0
+    if mdd <= 0:
+        return 0.0
+    return float(ann / mdd)

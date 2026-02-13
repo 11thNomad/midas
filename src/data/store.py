@@ -52,14 +52,22 @@ class DataStore:
             tmp_path = Path(tmp.name)
         os.replace(tmp_path, self.meta_path)
 
-    def _dataset_dir(self, dataset: str, symbol: str | None = None, timeframe: str | None = None) -> Path:
+    def _dataset_dir(
+        self,
+        dataset: str,
+        symbol: str | None = None,
+        timeframe: str | None = None,
+        *,
+        create: bool = True,
+    ) -> Path:
         parts = [self.root, dataset]
         if symbol:
             parts.append(symbol.upper())
         if timeframe:
             parts.append(timeframe.lower())
         path = Path(*parts)
-        path.mkdir(parents=True, exist_ok=True)
+        if create:
+            path.mkdir(parents=True, exist_ok=True)
         return path
 
     @staticmethod
@@ -93,7 +101,7 @@ class DataStore:
         normalized = self._ensure_ts(df, timestamp_col)
         normalized["_year"] = normalized[timestamp_col].dt.year
 
-        target_dir = self._dataset_dir(dataset, symbol, timeframe)
+        target_dir = self._dataset_dir(dataset, symbol, timeframe, create=True)
         rows_upserted = 0
 
         for year, chunk in normalized.groupby("_year"):
@@ -142,8 +150,11 @@ class DataStore:
         timestamp_col: str = "timestamp",
     ) -> pd.DataFrame:
         """Read and filter a partitioned timeseries dataset."""
-        directory = self._dataset_dir(dataset, symbol, timeframe)
-        files = sorted(directory.glob("*.parquet"))
+        directory = self._dataset_dir(dataset, symbol, timeframe, create=False)
+        if not directory.exists():
+            return pd.DataFrame()
+
+        files = self._partition_files_for_range(directory=directory, start=start, end=end)
         if not files:
             return pd.DataFrame()
 
@@ -160,6 +171,36 @@ class DataStore:
             out = out.sort_values(timestamp_col)
 
         return out.reset_index(drop=True)
+
+    @staticmethod
+    def _partition_files_for_range(
+        *,
+        directory: Path,
+        start: datetime | None,
+        end: datetime | None,
+    ) -> list[Path]:
+        files = sorted(directory.glob("*.parquet"))
+        if not files:
+            return []
+        if start is None and end is None:
+            return files
+
+        start_year = pd.Timestamp(start).year if start is not None else None
+        end_year = pd.Timestamp(end).year if end is not None else None
+
+        selected: list[Path] = []
+        for path in files:
+            stem = path.stem
+            if not stem.isdigit():
+                selected.append(path)
+                continue
+            year = int(stem)
+            if start_year is not None and year < start_year:
+                continue
+            if end_year is not None and year > end_year:
+                continue
+            selected.append(path)
+        return selected
 
     def _update_metadata(
         self,

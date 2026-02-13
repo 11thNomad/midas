@@ -139,6 +139,8 @@ def main() -> int:
     output_dir = str(REPO_ROOT / args.output_dir)
     periods_per_year = 252 if args.timeframe == "1d" else 252 * 75
     risk_free_rate_annual = float(backtest_cfg.get("risk_free_rate_annual", 0.07) or 0.07)
+    monte_carlo_permutations = int(backtest_cfg.get("monte_carlo_permutations", 200) or 200)
+    minimum_trade_count = int(backtest_cfg.get("minimum_trade_count", 50) or 50)
 
     print("=" * 72)
     print("Backtest Run")
@@ -173,6 +175,8 @@ def main() -> int:
                     initial_capital=initial_capital,
                     periods_per_year=periods_per_year,
                     risk_free_rate_annual=risk_free_rate_annual,
+                    monte_carlo_permutations=monte_carlo_permutations,
+                    minimum_trade_count=minimum_trade_count,
                     circuit_breaker=CircuitBreaker(
                         initial_capital=initial_capital,
                         max_daily_loss_pct=float(settings.get("risk", {}).get("max_daily_loss_pct", 3.0) or 3.0),
@@ -242,6 +246,8 @@ def main() -> int:
                 initial_capital=initial_capital,
                 periods_per_year=periods_per_year,
                 risk_free_rate_annual=risk_free_rate_annual,
+                monte_carlo_permutations=monte_carlo_permutations,
+                minimum_trade_count=minimum_trade_count,
                 circuit_breaker=CircuitBreaker(
                     initial_capital=initial_capital,
                     max_daily_loss_pct=float(settings.get("risk", {}).get("max_daily_loss_pct", 3.0) or 3.0),

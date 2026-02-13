@@ -118,3 +118,10 @@ def test_classifier_returns_unknown_on_nan_inputs():
     signals = RegimeSignals(timestamp=datetime(2026, 1, 1), india_vix=float("nan"), adx_14=25.0)
     regime = classifier.classify(signals)
     assert regime == RegimeState.UNKNOWN
+
+
+def test_regime_duration_uses_last_signal_timestamp_not_wall_clock():
+    classifier = RegimeClassifier(thresholds=RegimeThresholds())
+    classifier.classify(RegimeSignals(timestamp=datetime(2026, 1, 1), india_vix=13.0, adx_14=30.0))
+    classifier.classify(RegimeSignals(timestamp=datetime(2026, 1, 4), india_vix=13.5, adx_14=28.0))
+    assert classifier.get_regime_duration_days() == 3

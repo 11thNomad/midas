@@ -70,3 +70,38 @@ def test_count_rows_reads_parquet_metadata(tmp_path):
         directory / "2027.parquet", index=False
     )
     assert store._count_rows(directory) == 3
+
+
+def test_read_time_series_prunes_partitions_by_year(tmp_path, monkeypatch):
+    store = DataStore(base_dir=str(tmp_path / "cache"))
+    directory = store._dataset_dir("candles", symbol="TEST", timeframe="1d")
+    pd.DataFrame({"timestamp": pd.to_datetime(["2025-01-01"]), "close": [1.0]}).to_parquet(
+        directory / "2025.parquet", index=False
+    )
+    pd.DataFrame({"timestamp": pd.to_datetime(["2026-06-01"]), "close": [2.0]}).to_parquet(
+        directory / "2026.parquet", index=False
+    )
+    pd.DataFrame({"timestamp": pd.to_datetime(["2027-01-01"]), "close": [3.0]}).to_parquet(
+        directory / "2027.parquet", index=False
+    )
+
+    called: list[str] = []
+    original = pd.read_parquet
+
+    def _spy(path, *args, **kwargs):
+        called.append(str(path))
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(pd, "read_parquet", _spy)
+    loaded = store.read_time_series(
+        "candles",
+        symbol="TEST",
+        timeframe="1d",
+        start=datetime(2026, 1, 1),
+        end=datetime(2026, 12, 31),
+    )
+    assert len(loaded) == 1
+    assert loaded.iloc[0]["close"] == 2.0
+    assert any("2026.parquet" in p for p in called)
+    assert all("2025.parquet" not in p for p in called)
+    assert all("2027.parquet" not in p for p in called)
