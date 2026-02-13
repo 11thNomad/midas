@@ -68,7 +68,7 @@ def write_walkforward_report(
     }
 
 
-def _write_csv(df: pd.DataFrame, path: Path):
+def _write_csv(df: pd.DataFrame, path: Path) -> None:
     if df.empty:
         pd.DataFrame().to_csv(path, index=False)
     else:

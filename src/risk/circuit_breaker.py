@@ -19,6 +19,7 @@ from datetime import date, datetime
 from enum import Enum
 from pathlib import Path
 from threading import RLock
+from typing import Any
 from zoneinfo import ZoneInfo
 
 import structlog
@@ -88,10 +89,10 @@ class CircuitBreaker:
     current_equity: float = 0.0
     daily_pnl: DailyPnL = field(default_factory=lambda: DailyPnL(date=date.today()))
     open_position_count: int = 0
-    trip_history: list[dict] = field(default_factory=list)
+    trip_history: list[dict[str, Any]] = field(default_factory=list)
     _lock: RLock = field(default_factory=RLock, init=False, repr=False, compare=False)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         with self._lock:
             self.peak_equity = self.initial_capital
             self.current_equity = self.initial_capital
@@ -127,7 +128,7 @@ class CircuitBreaker:
         unrealized_pnl: float = 0.0,
         open_positions: int = 0,
         timestamp: datetime | None = None,
-    ):
+    ) -> None:
         """
         Called on every tick or position update.
 
@@ -161,7 +162,7 @@ class CircuitBreaker:
             self._check_warning()
             self._save_state()
 
-    def kill(self, reason: str = "Manual kill switch"):
+    def kill(self, reason: str = "Manual kill switch") -> None:
         """Emergency stop. Requires manual reset to resume."""
         with self._lock:
             self.state = BreakerState.KILLED
@@ -169,7 +170,7 @@ class CircuitBreaker:
             logger.critical("KILL SWITCH ACTIVATED", reason=reason)
             self._save_state()
 
-    def reset(self, confirm: bool = False):
+    def reset(self, confirm: bool = False) -> None:
         """
         Manual reset after a trip. Requires explicit confirmation.
         Call this only after reviewing what caused the trip.
@@ -187,7 +188,7 @@ class CircuitBreaker:
 
     # === Internal Checks ===
 
-    def _check_daily_loss(self):
+    def _check_daily_loss(self) -> None:
         """Trip if daily loss exceeds limit."""
         if self.state in (BreakerState.TRIPPED_DRAWDOWN, BreakerState.KILLED):
             return  # Already in a worse state
@@ -209,7 +210,7 @@ class CircuitBreaker:
                 limit=max_daily_loss,
             )
 
-    def _check_drawdown(self):
+    def _check_drawdown(self) -> None:
         """Trip if drawdown from peak exceeds limit."""
         if self.state == BreakerState.KILLED:
             return
@@ -232,7 +233,7 @@ class CircuitBreaker:
                 current=self.current_equity,
             )
 
-    def _check_warning(self):
+    def _check_warning(self) -> None:
         """Issue warning when approaching daily limit and clear when recovered."""
         if self.state in (
             BreakerState.TRIPPED_DAILY,
@@ -264,7 +265,7 @@ class CircuitBreaker:
                 warning_at=warning_threshold,
             )
 
-    def _reset_daily(self, *, today: date):
+    def _reset_daily(self, *, today: date) -> None:
         """Reset daily tracking at start of new trading day."""
         self.daily_pnl = DailyPnL(date=today)
         # Optionally auto-reset daily trip only.
@@ -274,7 +275,7 @@ class CircuitBreaker:
         elif self.state == BreakerState.WARNING:
             self.state = BreakerState.NORMAL
 
-    def _log_trip(self, trip_type: str, reason: str):
+    def _log_trip(self, trip_type: str, reason: str) -> None:
         """Record trip event for post-analysis."""
         self.trip_history.append(
             {
@@ -290,7 +291,7 @@ class CircuitBreaker:
 
     # === Reporting ===
 
-    def status(self) -> dict:
+    def status(self) -> dict[str, Any]:
         """Current status snapshot for monitoring/dashboard."""
         with self._lock:
             drawdown_pct = 0.0
@@ -382,7 +383,7 @@ class CircuitBreaker:
             return False
         return True
 
-    def _save_state(self):
+    def _save_state(self) -> None:
         if not self.state_path:
             return
         path = Path(self.state_path)

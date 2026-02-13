@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 import numpy as np
 import pandas as pd
 from ta.trend import ADXIndicator
@@ -25,7 +27,7 @@ def ema_crossover(series: pd.Series, fast: int = 20, slow: int = 50) -> pd.Serie
 
 def adx(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> pd.Series:
     indicator = ADXIndicator(high=high, low=low, close=close, window=period)
-    return indicator.adx()
+    return cast(pd.Series, indicator.adx())
 
 
 def dma_position(close: pd.Series, period: int) -> pd.Series:

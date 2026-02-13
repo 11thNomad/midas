@@ -1,5 +1,8 @@
 """Data layer exports."""
 
+from importlib import import_module
+from typing import Any
+
 from src.data.contracts import (
     DTOValidationError,
     NormalizedCandleDTO,
@@ -24,15 +27,17 @@ from src.data.quality import (
 )
 from src.data.store import DataStore
 
-try:
-    from src.data.kite_feed import KiteFeed
-except Exception:  # pragma: no cover - optional dependency path
-    KiteFeed = None  # type: ignore[assignment]
 
-try:
-    from src.data.truedata_feed import TrueDataFeed
-except Exception:  # pragma: no cover - optional dependency path
-    TrueDataFeed = None  # type: ignore[assignment]
+def _load_optional_attr(module_name: str, attr_name: str) -> Any | None:
+    try:
+        module = import_module(module_name)
+        return getattr(module, attr_name, None)
+    except Exception:  # pragma: no cover - optional dependency path
+        return None
+
+
+KiteFeed: Any | None = _load_optional_attr("src.data.kite_feed", "KiteFeed")
+TrueDataFeed: Any | None = _load_optional_attr("src.data.truedata_feed", "TrueDataFeed")
 
 __all__ = [
     "CandleRequest",

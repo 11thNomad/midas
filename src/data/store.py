@@ -6,11 +6,12 @@ import fcntl
 import json
 import os
 import tempfile
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
@@ -26,7 +27,7 @@ class DataStore:
 
     base_dir: str = "data/cache"
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         self.root = Path(self.base_dir)
         self.root.mkdir(parents=True, exist_ok=True)
         self.meta_path = self.root / "metadata.json"
@@ -34,12 +35,15 @@ class DataStore:
         if not self.meta_path.exists():
             self._save_metadata({"datasets": {}})
 
-    def _load_metadata(self) -> dict:
+    def _load_metadata(self) -> dict[str, Any]:
         if not self.meta_path.exists():
             return {"datasets": {}}
-        return json.loads(self.meta_path.read_text())
+        payload = json.loads(self.meta_path.read_text())
+        if isinstance(payload, dict):
+            return payload
+        return {"datasets": {}}
 
-    def _save_metadata(self, data: dict):
+    def _save_metadata(self, data: dict[str, Any]) -> None:
         payload = json.dumps(data, indent=2, sort_keys=True)
         with tempfile.NamedTemporaryFile(
             mode="w",
@@ -61,12 +65,11 @@ class DataStore:
         *,
         create: bool = True,
     ) -> Path:
-        parts = [self.root, dataset]
+        path = self.root / dataset
         if symbol:
-            parts.append(symbol.upper())
+            path = path / symbol.upper()
         if timeframe:
-            parts.append(timeframe.lower())
-        path = Path(*parts)
+            path = path / timeframe.lower()
         if create:
             path.mkdir(parents=True, exist_ok=True)
         return path
@@ -118,7 +121,10 @@ class DataStore:
 
         for year, chunk in normalized.groupby("_year"):
             part = chunk.drop(columns=["_year"]).copy()
-            part_path = target_dir / f"{int(year)}.parquet"
+            year_num = pd.to_numeric(year, errors="coerce")
+            if pd.isna(year_num):
+                continue
+            part_path = target_dir / f"{int(float(year_num))}.parquet"
             if part_path.exists():
                 existing = pd.read_parquet(part_path)
                 existing[timestamp_col] = pd.to_datetime(existing[timestamp_col], errors="coerce")
@@ -253,7 +259,7 @@ class DataStore:
         rows: int,
         min_ts: pd.Timestamp,
         max_ts: pd.Timestamp,
-    ):
+    ) -> None:
         with self._metadata_lock():
             metadata = self._load_metadata()
             key_parts = [dataset]
@@ -286,11 +292,11 @@ class DataStore:
                 total += len(pd.read_parquet(path, columns=[]))
         return total
 
-    def get_metadata(self) -> dict:
+    def get_metadata(self) -> dict[str, Any]:
         return self._load_metadata()
 
     @contextmanager
-    def _metadata_lock(self):
+    def _metadata_lock(self) -> Iterator[None]:
         self.meta_lock_path.touch(exist_ok=True)
         with self.meta_lock_path.open("r+") as lock_file:
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)

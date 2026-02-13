@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 import pandas as pd
 
@@ -20,7 +21,7 @@ class CandleQualityReport:
     missing_trading_days: int | None
     largest_gap_minutes: float | None
 
-    def as_dict(self) -> dict:
+    def as_dict(self) -> dict[str, Any]:
         return {
             "rows": self.rows,
             "missing_timestamps": self.missing_timestamps,
@@ -50,7 +51,7 @@ class QualityGateResult:
     issue_count: int
     violations: list[str]
 
-    def as_dict(self) -> dict:
+    def as_dict(self) -> dict[str, Any]:
         return {
             "status": self.status,
             "issue_count": self.issue_count,
@@ -197,7 +198,7 @@ def evaluate_quality_gate(
     return QualityGateResult(status=status, issue_count=issue_count, violations=violations)
 
 
-def thresholds_from_config(config: dict) -> CandleQualityThresholds:
+def thresholds_from_config(config: dict[str, Any]) -> CandleQualityThresholds:
     return CandleQualityThresholds(
         max_missing_timestamps=int(config.get("max_missing_timestamps", 0)),
         max_duplicate_timestamps=int(config.get("max_duplicate_timestamps", 0)),

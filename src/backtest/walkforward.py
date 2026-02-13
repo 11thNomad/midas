@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 import pandas as pd
 
@@ -57,7 +58,7 @@ def generate_walk_forward_windows(
     return windows
 
 
-def aggregate_walk_forward_metrics(fold_metrics: list[dict]) -> dict[str, float]:
+def aggregate_walk_forward_metrics(fold_metrics: list[dict[str, Any]]) -> dict[str, float]:
     if not fold_metrics:
         return {"folds": 0.0}
 
@@ -72,12 +73,12 @@ def aggregate_walk_forward_metrics(fold_metrics: list[dict]) -> dict[str, float]
 
 def build_sensitivity_variants(
     *,
-    base_config: dict,
+    base_config: dict[str, Any],
     params: list[str],
     multipliers: list[float],
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     """Build parameter-perturbed strategy config overrides."""
-    variants: list[dict] = []
+    variants: list[dict[str, Any]] = []
     seen: set[tuple[str, float | int]] = set()
     for param in params:
         if param not in base_config:
@@ -114,7 +115,7 @@ def build_sensitivity_variants(
 
 def summarize_sensitivity_results(
     *,
-    variant_rows: list[dict],
+    variant_rows: list[dict[str, Any]],
     base_total_return_pct: float,
 ) -> dict[str, float]:
     """Summarize parameter sensitivity outcomes into scalar diagnostics."""
@@ -158,7 +159,7 @@ def summarize_sensitivity_results(
     }
 
 
-def aggregate_cross_instrument_results(rows: list[dict]) -> pd.DataFrame:
+def aggregate_cross_instrument_results(rows: list[dict[str, Any]]) -> pd.DataFrame:
     """Aggregate per-symbol backtest rows into cross-instrument summaries."""
     if not rows:
         return pd.DataFrame()

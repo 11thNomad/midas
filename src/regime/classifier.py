@@ -69,7 +69,7 @@ class RegimeThresholds:
     adx_smoothing_alpha: float = 0.3
 
     @classmethod
-    def from_config(cls, config: dict) -> "RegimeThresholds":
+    def from_config(cls, config: dict[str, Any]) -> "RegimeThresholds":
         """Load thresholds from settings.yaml regime section."""
         return cls(
             vix_low=config.get("vix_low", 14.0),
@@ -114,8 +114,8 @@ class RegimeClassifier:
     current_regime: RegimeState = RegimeState.UNKNOWN
     previous_regime: RegimeState = RegimeState.UNKNOWN
     regime_since: datetime | None = None
-    history: list[dict] = field(default_factory=list)
-    snapshots: list[dict] = field(default_factory=list)
+    history: list[dict[str, Any]] = field(default_factory=list)
+    snapshots: list[dict[str, Any]] = field(default_factory=list)
     _smoothed_adx: float | None = None
     _last_timestamp: datetime | None = None
 
@@ -252,7 +252,7 @@ class RegimeClassifier:
             "iv_surface_tilt_change": signals.iv_surface_tilt_change,
         }
 
-    def _on_regime_change(self, new_regime: RegimeState, signals: RegimeSignals):
+    def _on_regime_change(self, new_regime: RegimeState, signals: RegimeSignals) -> None:
         """Log and record regime transitions."""
         transition = {
             "timestamp": signals.timestamp.isoformat(),

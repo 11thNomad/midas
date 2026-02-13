@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 from src.strategies.base import BaseStrategy, RegimeState, Signal, SignalType
 
@@ -10,8 +11,9 @@ from src.strategies.base import BaseStrategy, RegimeState, Signal, SignalType
 class RegimeProbeStrategy(BaseStrategy):
     """Enter long in trending regimes, exit otherwise."""
 
-    def generate_signal(self, market_data: dict, regime: RegimeState) -> Signal:
-        ts = market_data.get("timestamp", datetime.now())
+    def generate_signal(self, market_data: dict[str, Any], regime: RegimeState) -> Signal:
+        raw_ts = market_data.get("timestamp")
+        ts = raw_ts if isinstance(raw_ts, datetime) else datetime.now()
         instrument = self.config.get("instrument", "NIFTY")
 
         if self.state.current_position is None and regime in (
@@ -55,7 +57,7 @@ class RegimeProbeStrategy(BaseStrategy):
             reason="No probe action",
         )
 
-    def get_exit_conditions(self, market_data: dict) -> Signal | None:
+    def get_exit_conditions(self, market_data: dict[str, Any]) -> Signal | None:
         return None
 
     def compute_position_size(self, capital: float, risk_per_trade: float) -> int:

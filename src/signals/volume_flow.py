@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 import pandas as pd
 from ta.volume import OnBalanceVolumeIndicator
 
@@ -12,7 +14,10 @@ def volume_spike(volume: pd.Series, lookback: int = 20) -> pd.Series:
 
 
 def on_balance_volume(close: pd.Series, volume: pd.Series) -> pd.Series:
-    return OnBalanceVolumeIndicator(close=close, volume=volume).on_balance_volume()
+    return cast(
+        pd.Series,
+        OnBalanceVolumeIndicator(close=close, volume=volume).on_balance_volume(),
+    )
 
 
 def fii_net_rolling(fii_net: pd.Series, window: int = 3) -> pd.Series:

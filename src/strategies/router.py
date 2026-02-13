@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Any
 
 from src.strategies.base import BaseStrategy, RegimeState, Signal
 
@@ -14,7 +15,7 @@ class StrategyRouter:
 
     strategies: list[BaseStrategy]
     current_regime: RegimeState = RegimeState.UNKNOWN
-    transition_log: list[dict] = field(default_factory=list)
+    transition_log: list[dict[str, Any]] = field(default_factory=list)
 
     def on_regime_change(
         self,
@@ -56,7 +57,7 @@ class StrategyRouter:
 
         return out
 
-    def generate_signals(self, market_data: dict, regime: RegimeState) -> list[Signal]:
+    def generate_signals(self, market_data: dict[str, Any], regime: RegimeState) -> list[Signal]:
         """Call active strategies and return actionable signals only."""
         out: list[Signal] = []
         for strategy in self.strategies:

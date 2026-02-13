@@ -50,6 +50,8 @@ dev = [
     "pytest-asyncio>=0.23",
     "ruff>=0.1",                # Linter + formatter
     "mypy>=1.7",                # Type checking
+    "pandas-stubs>=2.2.3.250308",
+    "types-requests>=2.32.0.20250328",
     "ipykernel>=6.27",          # Jupyter support
     "jupyterlab>=4.0",
     "matplotlib>=3.8",          # Plotting in notebooks
@@ -75,6 +77,10 @@ per-file-ignores = {"scripts/*.py" = ["E402"]}
 [tool.mypy]
 python_version = "3.11"
 strict = true
+
+[[tool.mypy.overrides]]
+module = ["ta", "ta.*", "pyarrow", "pyarrow.*", "kiteconnect", "kiteconnect.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

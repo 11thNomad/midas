@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 import pandas as pd
 from ta.momentum import RSIIndicator
 from ta.volatility import AverageTrueRange, BollingerBands
 
 
 def rsi(close: pd.Series, period: int = 14) -> pd.Series:
-    return RSIIndicator(close=close, window=period).rsi()
+    return cast(pd.Series, RSIIndicator(close=close, window=period).rsi())
 
 
 def bollinger_bands(close: pd.Series, period: int = 20, std_dev: float = 2.0) -> pd.DataFrame:
@@ -25,7 +27,7 @@ def bollinger_bands(close: pd.Series, period: int = 20, std_dev: float = 2.0) ->
 
 def bollinger_percent_b(close: pd.Series, period: int = 20, std_dev: float = 2.0) -> pd.Series:
     bb = BollingerBands(close=close, window=period, window_dev=std_dev)
-    return bb.bollinger_pband()
+    return cast(pd.Series, bb.bollinger_pband())
 
 
 def zscore(series: pd.Series, lookback: int = 20) -> pd.Series:
@@ -50,4 +52,4 @@ def vwap_deviation_atr(
 ) -> pd.Series:
     vw = vwap(high, low, close, volume)
     atr = AverageTrueRange(high=high, low=low, close=close, window=atr_period).average_true_range()
-    return (close - vw) / atr.replace(0, pd.NA)
+    return cast(pd.Series, (close - vw) / atr.replace(0, pd.NA))

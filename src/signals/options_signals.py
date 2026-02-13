@@ -35,7 +35,7 @@ def max_pain(chain_df: pd.DataFrame) -> float | None:
     if chain_df.empty or not required.issubset(chain_df.columns):
         return None
 
-    strikes = sorted(chain_df["strike"].dropna().unique())
+    strikes: list[float] = sorted(float(v) for v in chain_df["strike"].dropna().unique())
     if not strikes:
         return None
 
@@ -46,8 +46,8 @@ def max_pain(chain_df: pd.DataFrame) -> float | None:
         put_pain = ((puts["strike"] - settlement).clip(lower=0) * puts["oi"]).sum()
         return float(call_pain + put_pain)
 
-    pains = {strike: payout_at_expiry(strike) for strike in strikes}
-    return min(pains, key=pains.get)
+    pains: dict[float, float] = {strike: payout_at_expiry(strike) for strike in strikes}
+    return min(pains, key=lambda strike: pains[strike])
 
 
 def oi_change_by_strike(chain_df: pd.DataFrame) -> pd.Series:

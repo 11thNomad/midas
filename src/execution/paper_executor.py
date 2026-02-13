@@ -33,16 +33,16 @@ class PaperExecutionEngine:
     )
     _realized_pnl_today: float = field(default=0.0, init=False, repr=False)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         self._store = DataStore(base_dir=self.base_dir)
         self._cash = float(self.initial_capital)
 
     def execute_signals(
         self, signals: list[Signal], *, market_data: dict[str, Any] | None = None
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
         """Execute actionable signals as immediate paper fills and persist events."""
         market_data = market_data or {}
-        fills: list[dict] = []
+        fills: list[dict[str, Any]] = []
 
         for signal in signals:
             if not signal.is_actionable:
@@ -92,11 +92,13 @@ class PaperExecutionEngine:
             timestamp_col="timestamp",
         )
 
-    def _fills_for_signal(self, signal: Signal, *, market_data: dict[str, Any]) -> list[dict]:
+    def _fills_for_signal(
+        self, signal: Signal, *, market_data: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         orders = signal.orders or [self._default_order(signal)]
         ts = signal.timestamp
 
-        out: list[dict] = []
+        out: list[dict[str, Any]] = []
         for order in orders:
             self._fill_seq += 1
             instrument = str(order.get("symbol", signal.instrument))
@@ -168,7 +170,7 @@ class PaperExecutionEngine:
         return "BUY"
 
     @staticmethod
-    def _resolve_order_price(order: dict, market_data: dict[str, Any]) -> float:
+    def _resolve_order_price(order: dict[str, Any], market_data: dict[str, Any]) -> float:
         if "price" in order and order["price"] is not None:
             return float(order["price"])
         if "ltp" in order and order["ltp"] is not None:

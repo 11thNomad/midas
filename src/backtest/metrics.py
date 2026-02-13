@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -187,15 +188,25 @@ def regime_segmented_returns(equity_curve: pd.DataFrame, regimes: pd.DataFrame) 
             columns=["regime", "bars", "mean_bar_return_pct", "cumulative_return_pct"]
         )
 
-    rows: list[dict] = []
+    rows: list[dict[str, Any]] = []
     for regime, grp in merged.groupby("regime"):
-        returns = grp["bar_return"].astype("float64")
-        cumulative = (returns + 1.0).prod() - 1.0
+        returns = pd.Series(
+            pd.to_numeric(grp["bar_return"], errors="coerce"),
+            index=grp.index,
+            dtype="float64",
+        ).dropna()
+        if returns.empty:
+            cumulative = 0.0
+            mean_bar_return_pct = 0.0
+        else:
+            values = returns.to_numpy(dtype="float64", copy=False)
+            cumulative = float(np.prod(values + 1.0) - 1.0)
+            mean_bar_return_pct = float(values.mean() * 100.0)
         rows.append(
             {
                 "regime": str(regime),
                 "bars": int(len(grp)),
-                "mean_bar_return_pct": float(returns.mean() * 100.0),
+                "mean_bar_return_pct": mean_bar_return_pct,
                 "cumulative_return_pct": float(cumulative * 100.0),
             }
         )
@@ -208,8 +219,12 @@ def _fill_cashflow(fills: pd.DataFrame) -> pd.Series:
     if "side" not in fills.columns:
         return pd.Series(dtype="float64")
     side = fills["side"].astype(str).str.upper()
-    notional = pd.to_numeric(fills.get("notional", 0.0), errors="coerce").fillna(0.0)
-    fees = pd.to_numeric(fills.get("fees", 0.0), errors="coerce").fillna(0.0)
+    notional_source = (
+        fills["notional"] if "notional" in fills.columns else pd.Series(0.0, index=fills.index)
+    )
+    fees_source = fills["fees"] if "fees" in fills.columns else pd.Series(0.0, index=fills.index)
+    notional = pd.to_numeric(notional_source, errors="coerce").fillna(0.0)
+    fees = pd.to_numeric(fees_source, errors="coerce").fillna(0.0)
     signed = notional.where(side == "SELL", -notional) - fees
     return signed
 

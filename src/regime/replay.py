@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 import pandas as pd
 
@@ -39,7 +40,7 @@ def replay_regimes_no_lookahead(
     vix_frame = _prep_vix(vix_df)
     fii_frame = _prep_fii(fii_df)
 
-    snapshots: list[dict] = []
+    snapshots: list[dict[str, Any]] = []
     prev_chain: pd.DataFrame | None = None
 
     for i in range(len(candles_sorted)):

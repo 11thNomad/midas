@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 import numpy as np
 import pandas as pd
 from ta.volatility import AverageTrueRange
 
 
 def atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> pd.Series:
-    return AverageTrueRange(high=high, low=low, close=close, window=period).average_true_range()
+    return cast(
+        pd.Series,
+        AverageTrueRange(high=high, low=low, close=close, window=period).average_true_range(),
+    )
 
 
 def atr_pct(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> pd.Series:
@@ -19,8 +24,11 @@ def atr_pct(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14)
 def historical_volatility(
     close: pd.Series, window: int = 20, annualization: int = 252
 ) -> pd.Series:
-    log_returns = np.log(close / close.shift(1))
-    return log_returns.rolling(window=window).std(ddof=0) * np.sqrt(annualization)
+    log_returns = pd.Series(np.log(close / close.shift(1)), index=close.index)
+    return cast(
+        pd.Series,
+        log_returns.rolling(window=window).std(ddof=0) * np.sqrt(annualization),
+    )
 
 
 def vix_change(vix: pd.Series, periods: int = 5) -> pd.Series:

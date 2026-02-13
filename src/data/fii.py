@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 import requests
@@ -20,8 +21,10 @@ class NseFiiClient:
 
     base_url: str = "https://www.nseindia.com"
     timeout: int = 15
+    session: requests.Session = field(init=False, repr=False)
+    headers: dict[str, str] = field(init=False, repr=False)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         self.session = requests.Session()
         self.headers = {
             "User-Agent": (
@@ -37,7 +40,7 @@ class NseFiiClient:
     def _format_date(value: datetime) -> str:
         return value.strftime("%d-%m-%Y")
 
-    def fetch_raw(self, start: datetime, end: datetime) -> list[dict]:
+    def fetch_raw(self, start: datetime, end: datetime) -> list[dict[str, Any]]:
         url = (
             f"{self.base_url}/api/fiidiiTradeReact"
             f"?fromDate={self._format_date(start)}&toDate={self._format_date(end)}"
@@ -56,14 +59,14 @@ class NseFiiClient:
         return payload
 
 
-def normalize_fii_payload(payload: list[dict]) -> pd.DataFrame:
+def normalize_fii_payload(payload: list[dict[str, Any]]) -> pd.DataFrame:
     """Convert NSE category rows into a date-indexed FII/DII table."""
     if not payload:
         return pd.DataFrame(
             columns=["date", "fii_buy", "fii_sell", "fii_net", "dii_buy", "dii_sell", "dii_net"]
         )
 
-    rows = []
+    rows: list[dict[str, Any]] = []
     for item in payload:
         category = str(item.get("category", "")).strip().upper()
         date_text = item.get("date")

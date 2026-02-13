@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any, cast
 
 import pandas as pd
 
@@ -75,9 +76,9 @@ class BacktestEngine:
         avg_cost_by_instrument: dict[str, float] = {}
         last_price_by_instrument: dict[str, float] = {}
         realized_pnl_today = 0.0
-        fill_rows: list[dict] = []
-        equity_rows: list[dict] = []
-        regime_rows: list[dict] = []
+        fill_rows: list[dict[str, Any]] = []
+        equity_rows: list[dict[str, Any]] = []
+        regime_rows: list[dict[str, Any]] = []
         previous_regime = self.classifier.current_regime
         analysis_cutoff = pd.Timestamp(analysis_start) if analysis_start is not None else None
 
@@ -315,7 +316,7 @@ class BacktestEngine:
             return None
         latest_ts = eligible["timestamp"].max()
         snap = eligible.loc[eligible["timestamp"] == latest_ts].copy()
-        return snap.reset_index(drop=True)
+        return cast(pd.DataFrame, snap.reset_index(drop=True))
 
     @staticmethod
     def _build_mark_price_map(
@@ -353,7 +354,10 @@ class BacktestEngine:
             symbol = str(row.get(symbol_col, "")).strip()
             if not symbol:
                 continue
-            price = pd.to_numeric(row.get(price_col), errors="coerce")
+            raw_price = row.get(price_col)
+            if raw_price is None:
+                continue
+            price = pd.to_numeric(raw_price, errors="coerce")
             if pd.isna(price):
                 continue
             prices[symbol] = float(price)

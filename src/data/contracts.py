@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 import pandas as pd
 
@@ -117,7 +118,7 @@ def frame_from_candle_dtos(dtos: list[NormalizedCandleDTO]) -> pd.DataFrame:
 
 
 def option_dtos_from_chain(
-    chain,
+    chain: Any,
     *,
     source: str,
 ) -> list[NormalizedOptionRowDTO]:

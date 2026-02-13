@@ -59,8 +59,8 @@ class Signal:
     # Context — logged with every trade for post-analysis
     regime: RegimeState = RegimeState.UNKNOWN
     confidence: float = 0.0  # 0.0 to 1.0
-    greeks_snapshot: dict = field(default_factory=dict)
-    indicators: dict = field(default_factory=dict)  # ADX, RSI, VIX, etc.
+    greeks_snapshot: dict[str, Any] = field(default_factory=dict)
+    indicators: dict[str, Any] = field(default_factory=dict)  # ADX, RSI, VIX, etc.
     reason: str = ""  # Human-readable entry/exit reason
 
     @property
@@ -74,7 +74,7 @@ class StrategyState:
 
     name: str
     is_active: bool = True
-    current_position: dict | None = None
+    current_position: dict[str, Any] | None = None
     entry_time: datetime | None = None
     entry_price: float = 0.0
     unrealized_pnl: float = 0.0
@@ -98,7 +98,7 @@ class BaseStrategy(ABC):
     The execution layer (broker.py or paper.py) handles order placement.
     """
 
-    def __init__(self, name: str, config: dict):
+    def __init__(self, name: str, config: dict[str, Any]):
         self.name = name
         self.config = config
         self.state = StrategyState(name=name)
@@ -190,11 +190,17 @@ class BaseStrategy(ABC):
             )
         return None
 
-    def on_fill(self, order_id: str, fill_price: float, fill_quantity: int, timestamp: datetime):
+    def on_fill(
+        self,
+        order_id: str,
+        fill_price: float,
+        fill_quantity: int,
+        timestamp: datetime,
+    ) -> None:
         """Called when an order is filled. Update internal state."""
         self.state.trade_count += 1
 
-    def on_exit(self):
+    def on_exit(self) -> None:
         """Cleanup when strategy is deactivated. Override if needed."""
         self.state.is_active = False
 

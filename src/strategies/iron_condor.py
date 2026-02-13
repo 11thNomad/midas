@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 import pandas as pd
 
@@ -12,8 +13,9 @@ from src.strategies.base import BaseStrategy, RegimeState, Signal, SignalType
 class IronCondorStrategy(BaseStrategy):
     """Simplified iron condor lifecycle for early backtest integration."""
 
-    def generate_signal(self, market_data: dict, regime: RegimeState) -> Signal:
-        ts = market_data.get("timestamp", datetime.now())
+    def generate_signal(self, market_data: dict[str, Any], regime: RegimeState) -> Signal:
+        raw_ts = market_data.get("timestamp")
+        ts = raw_ts if isinstance(raw_ts, datetime) else datetime.now()
         instrument = self.config.get("instrument", "NIFTY")
         lots = self.compute_position_size(capital=0, risk_per_trade=0)
         underlying_price = float(market_data.get("underlying_price", 0.0) or 0.0)
@@ -67,11 +69,12 @@ class IronCondorStrategy(BaseStrategy):
             reason="Position already open",
         )
 
-    def get_exit_conditions(self, market_data: dict) -> Signal | None:
+    def get_exit_conditions(self, market_data: dict[str, Any]) -> Signal | None:
         if self.state.current_position is None:
             return None
 
-        ts = market_data.get("timestamp", datetime.now())
+        raw_ts = market_data.get("timestamp")
+        ts = raw_ts if isinstance(raw_ts, datetime) else datetime.now()
         instrument = self.config.get("instrument", "NIFTY")
         chain_df = self._normalize_chain(market_data.get("option_chain"))
         if chain_df.empty:
@@ -203,7 +206,7 @@ class IronCondorStrategy(BaseStrategy):
         underlying_price: float,
         instrument: str,
         quantity: int,
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
         wing_width = float(self.config.get("wing_width", 100))
         call_target = float(self.config.get("call_delta", 0.15))
         put_target = float(self.config.get("put_delta", -0.15))
@@ -278,6 +281,8 @@ class IronCondorStrategy(BaseStrategy):
     def _row_price(row: pd.Series) -> float:
         for key in ("ltp", "last_price", "close", "price"):
             value = row.get(key)
+            if value is None:
+                continue
             parsed = pd.to_numeric(value, errors="coerce")
             if not pd.isna(parsed):
                 return float(parsed)
@@ -316,7 +321,7 @@ class IronCondorStrategy(BaseStrategy):
         return scored.iloc[0]
 
     @staticmethod
-    def _entry_credit_from_legs(legs: list[dict]) -> float:
+    def _entry_credit_from_legs(legs: list[dict[str, Any]]) -> float:
         credit = 0.0
         for leg in legs:
             qty = float(leg.get("quantity", 1) or 1)
@@ -349,13 +354,16 @@ class IronCondorStrategy(BaseStrategy):
         out: dict[str, float] = {}
         for _, row in chain_df.iterrows():
             symbol = str(row.get(symbol_col, "")).strip()
-            price = pd.to_numeric(row.get(price_col), errors="coerce")
+            raw_price = row.get(price_col)
+            if raw_price is None:
+                continue
+            price = pd.to_numeric(raw_price, errors="coerce")
             if symbol and not pd.isna(price):
                 out[symbol] = float(price)
         return out
 
     @staticmethod
-    def _close_debit(*, legs: list[dict], price_map: dict[str, float]) -> float | None:
+    def _close_debit(*, legs: list[dict[str, Any]], price_map: dict[str, float]) -> float | None:
         close_debit = 0.0
         for leg in legs:
             symbol = str(leg.get("symbol", "")).strip()
@@ -371,8 +379,8 @@ class IronCondorStrategy(BaseStrategy):
         return float(close_debit)
 
     @staticmethod
-    def _reverse_orders(*, legs: list[dict], quantity: int) -> list[dict]:
-        exit_orders = []
+    def _reverse_orders(*, legs: list[dict[str, Any]], quantity: int) -> list[dict[str, Any]]:
+        exit_orders: list[dict[str, Any]] = []
         for leg in legs:
             action = str(leg.get("action", "")).upper()
             exit_action = "BUY" if action == "SELL" else "SELL"
@@ -382,7 +390,9 @@ class IronCondorStrategy(BaseStrategy):
         return exit_orders
 
     @staticmethod
-    def _min_dte(chain_df: pd.DataFrame, *, legs: list[dict], now_ts: datetime) -> int | None:
+    def _min_dte(
+        chain_df: pd.DataFrame, *, legs: list[dict[str, Any]], now_ts: datetime
+    ) -> int | None:
         if "expiry" not in chain_df.columns:
             return None
         symbols = {str(leg.get("symbol", "")).strip() for leg in legs}

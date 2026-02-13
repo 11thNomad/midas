@@ -30,7 +30,7 @@ class KiteFeed(DataFeed):
     access_token: str
     name: str = "kite"
     _kite: Any = field(init=False, repr=False)
-    _instruments: list[dict] | None = field(default=None, init=False, repr=False)
+    _instruments: list[dict[str, Any]] | None = field(default=None, init=False, repr=False)
     _option_expiry_cache: dict[str, list[datetime]] = field(
         default_factory=dict, init=False, repr=False
     )
@@ -65,7 +65,7 @@ class KiteFeed(DataFeed):
         "INDIAVIX": "NSE:INDIA VIX",
     }
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         try:
             from kiteconnect import KiteConnect
         except ImportError as exc:
@@ -81,7 +81,7 @@ class KiteFeed(DataFeed):
             raise ValueError(f"Unsupported timeframe '{timeframe}' for Kite feed")
         return self._INTERVAL_MAP[key]
 
-    def _load_instruments(self) -> list[dict]:
+    def _load_instruments(self) -> list[dict[str, Any]]:
         if self._instruments is None:
             self._instruments = self._kite.instruments()
         return self._instruments
@@ -120,7 +120,7 @@ class KiteFeed(DataFeed):
             cursor = chunk_end + timedelta(seconds=1)
 
     @staticmethod
-    def _normalize_candles(rows: list[dict]) -> pd.DataFrame:
+    def _normalize_candles(rows: list[dict[str, Any]]) -> pd.DataFrame:
         if not rows:
             return pd.DataFrame(
                 columns=["timestamp", "open", "high", "low", "close", "volume", "oi"]
@@ -149,7 +149,7 @@ class KiteFeed(DataFeed):
         token = self._resolve_instrument_token(symbol)
         interval = self._normalize_interval(timeframe)
 
-        all_rows: list[dict] = []
+        all_rows: list[dict[str, Any]] = []
         for chunk_start, chunk_end in self._iter_chunks(start, end, interval):
             rows = self._kite.historical_data(
                 instrument_token=token,
@@ -237,7 +237,7 @@ class KiteFeed(DataFeed):
             raise KiteFeedError(f"No option contracts found for {symbol} expiry={target_expiry}")
 
         quote_keys = [f"NFO:{row['tradingsymbol']}" for row in candidates]
-        quotes: dict[str, dict] = {}
+        quotes: dict[str, dict[str, Any]] = {}
         for chunk in self._batched(quote_keys, size=200):
             quotes.update(self._kite.quote(chunk))
 

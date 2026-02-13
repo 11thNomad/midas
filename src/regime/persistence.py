@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Any
 
 import pandas as pd
 
@@ -18,11 +19,15 @@ class RegimeSnapshotStore:
     dataset: str = "regime_snapshots"
     _store: DataStore = field(init=False, repr=False)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         self._store = DataStore(base_dir=self.base_dir)
 
     def persist_snapshot(
-        self, snapshot: dict, *, symbol: str = "NIFTY", source: str = "regime_classifier"
+        self,
+        snapshot: dict[str, Any],
+        *,
+        symbol: str = "NIFTY",
+        source: str = "regime_classifier",
     ) -> int:
         frame = pd.DataFrame([snapshot])
         if "timestamp" not in frame.columns:
@@ -41,7 +46,7 @@ class RegimeSnapshotStore:
 
     def persist_snapshots(
         self,
-        snapshots: list[dict],
+        snapshots: list[dict[str, Any]],
         *,
         symbol: str = "NIFTY",
         source: str = "regime_classifier",
@@ -87,11 +92,15 @@ class StrategyTransitionStore:
     dataset: str = "strategy_transitions"
     _store: DataStore = field(init=False, repr=False)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         self._store = DataStore(base_dir=self.base_dir)
 
     def persist_transitions(
-        self, transitions: list[dict], *, symbol: str = "NIFTY", source: str = "strategy_router"
+        self,
+        transitions: list[dict[str, Any]],
+        *,
+        symbol: str = "NIFTY",
+        source: str = "strategy_router",
     ) -> int:
         if not transitions:
             return 0

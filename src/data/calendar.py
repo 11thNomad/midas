@@ -76,7 +76,7 @@ HOLIDAYS: dict[int, list[date]] = {
 class NSECalendar:
     """Minimal trading-day calendar for NSE cash/F&O quality checks."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._holiday_set: set[date] = set()
         for values in HOLIDAYS.values():
             self._holiday_set.update(values)

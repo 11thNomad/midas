@@ -61,7 +61,7 @@ class TrueDataFeed(DataFeed):
             raise ValueError(f"Unsupported timeframe '{timeframe}' for TrueData feed")
         return self._INTERVAL_MAP[key]
 
-    def _resolve_client_class(self):
+    def _resolve_client_class(self) -> Any:
         for module_name, class_name in self._CLIENT_IMPORT_CANDIDATES:
             try:
                 module = import_module(module_name)
@@ -74,7 +74,7 @@ class TrueDataFeed(DataFeed):
             "Install the official truedata_ws package and verify imports."
         )
 
-    def _ensure_client(self):
+    def _ensure_client(self) -> Any:
         if self._client is not None:
             return self._client
 
@@ -221,7 +221,7 @@ class TrueDataFeed(DataFeed):
         ) from last_error
 
     @staticmethod
-    def _to_option_contract(row: dict) -> OptionContract:
+    def _to_option_contract(row: dict[Any, Any]) -> OptionContract:
         opt_type_raw = str(row.get("option_type", row.get("type", "CE"))).upper()
         instrument_type = InstrumentType.CALL if opt_type_raw == "CE" else InstrumentType.PUT
 
