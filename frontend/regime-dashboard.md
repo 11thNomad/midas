@@ -1,0 +1,9 @@
+Here's your regime analysis dashboard. Let me walk you through what it shows and how to use it for visual validation:
+What you're looking at:
+The main price chart colors each segment of the NIFTY line by its classified regime — green for low-vol ranging, blue for low-vol trending, amber for high-vol trending, red for high-vol choppy. Below it, the VIX and ADX panel shows the raw signals that drive the classification, with threshold lines at VIX 14/18 and ADX 25 so you can visually verify that the regime labels match the signal values.
+How to validate:
+Use the year filter buttons to zoom into specific periods. For each period, ask yourself: does the color of the price line match my intuition about what was happening? The Adani crisis period should show red/amber (high vol). The calm mid-2023 summer should be solidly green (low vol ranging). The election volatility in 2024 should flash amber/red.
+Toggle FII Flow on — you'll see the red bars during selloff periods, and you can verify that the regime classifier correctly overrides to HIGH_VOL_CHOPPY when FII selling is extreme even if VIX hasn't caught up yet.
+Click any regime card at the top to highlight only that regime on the chart. This lets you see, for example, all the LOW_VOL_RANGING periods isolated — are they genuinely flat/range-bound on the price chart? If a green period shows a strong trend, your VIX or ADX thresholds need adjustment.
+The regime timeline bar at the bottom gives you a compressed view of how regimes sequence and how long each lasts. Very short bands (1-2 days) suggest the classifier is flip-flopping — you'd want to add hysteresis (require 2 consecutive days before switching).
+The VIX × ADX matrix at the bottom shows the actual decision logic visually.
