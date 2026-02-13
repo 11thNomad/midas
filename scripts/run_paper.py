@@ -28,6 +28,7 @@ except ImportError:  # pragma: no cover - optional in some environments
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
+from src.data.contracts import option_dtos_from_chain
 from src.data.fii import FiiDownloadError, fetch_fii_dii
 from src.data.kite_feed import KiteFeed, KiteFeedError
 from src.data.store import DataStore
@@ -46,6 +47,8 @@ from src.strategies.momentum import MomentumStrategy
 from src.strategies.base import BaseStrategy, RegimeState, Signal, SignalType
 from src.strategies.regime_probe import RegimeProbeStrategy
 from src.strategies.router import StrategyRouter
+
+OPTION_CHAIN_DEDUP_COLS = ["timestamp", "expiry", "strike", "option_type"]
 
 
 @dataclass
@@ -169,6 +172,176 @@ def _load_or_fetch_fii(*, store: DataStore, start: datetime, end: datetime) -> p
     return fetched
 
 
+def _option_chain_dte_bounds(settings: dict) -> tuple[int, int | None]:
+    iron_cfg = settings.get("strategies", {}).get("iron_condor", {})
+    if not iron_cfg or not iron_cfg.get("enabled", False):
+        return 0, None
+    dte_min = int(iron_cfg.get("dte_min", 5) or 5)
+    dte_max = int(iron_cfg.get("dte_max", 14) or 14)
+    if dte_min > dte_max:
+        dte_min, dte_max = dte_max, dte_min
+    return dte_min, dte_max
+
+
+def _select_target_expiry(
+    *,
+    feed: KiteFeed,
+    symbol: str,
+    asof: datetime,
+    dte_min: int,
+    dte_max: int | None,
+) -> datetime | None:
+    expiries = feed.get_option_expiries(symbol=symbol, start=asof)
+    if not expiries:
+        return None
+
+    in_window: list[datetime] = []
+    beyond_min: list[datetime] = []
+    for expiry in expiries:
+        dte = (expiry.date() - asof.date()).days
+        if dte < dte_min:
+            continue
+        beyond_min.append(expiry)
+        if dte_max is None or dte <= dte_max:
+            in_window.append(expiry)
+
+    if in_window:
+        return in_window[0]
+    if beyond_min:
+        return beyond_min[0]
+    return expiries[0]
+
+
+def _frame_from_option_chain(*, source: str, chain) -> pd.DataFrame:
+    dtos = option_dtos_from_chain(chain, source=source)
+    if not dtos:
+        return pd.DataFrame(
+            columns=[
+                "timestamp",
+                "underlying",
+                "underlying_price",
+                "expiry",
+                "strike",
+                "option_type",
+                "symbol",
+                "ltp",
+                "bid",
+                "ask",
+                "volume",
+                "oi",
+                "change_in_oi",
+                "iv",
+                "delta",
+                "gamma",
+                "theta",
+                "vega",
+                "rho",
+                "source",
+            ]
+        )
+
+    rows: list[dict] = []
+    for dto, contract in zip(dtos, chain.contracts):
+        rows.append(
+            {
+                "timestamp": dto.timestamp,
+                "underlying": dto.underlying,
+                "underlying_price": chain.underlying_price,
+                "expiry": dto.expiry,
+                "strike": dto.strike,
+                "option_type": dto.option_type,
+                "symbol": contract.symbol,
+                "ltp": dto.ltp,
+                "bid": dto.bid,
+                "ask": dto.ask,
+                "volume": dto.volume,
+                "oi": dto.oi,
+                "change_in_oi": dto.change_in_oi,
+                "iv": dto.iv,
+                "delta": dto.delta,
+                "gamma": dto.gamma,
+                "theta": dto.theta,
+                "vega": dto.vega,
+                "rho": dto.rho,
+                "source": dto.source,
+            }
+        )
+
+    frame = pd.DataFrame(rows)
+    frame["timestamp"] = pd.to_datetime(frame["timestamp"], errors="coerce")
+    frame["expiry"] = pd.to_datetime(frame["expiry"], errors="coerce")
+    frame["strike"] = pd.to_numeric(frame["strike"], errors="coerce")
+    frame["option_type"] = frame["option_type"].astype(str).str.upper()
+    frame = frame.dropna(subset=["timestamp", "expiry", "strike"])
+    return frame.sort_values(["timestamp", "expiry", "strike", "option_type"]).reset_index(drop=True)
+
+
+def _load_latest_option_chain_snapshot(
+    *,
+    store: DataStore,
+    symbol: str,
+    timeframe: str,
+    before: datetime,
+    lookback_days: int = 30,
+) -> pd.DataFrame:
+    window_start = before - timedelta(days=lookback_days)
+    cutoff = before - timedelta(microseconds=1)
+    prior = store.read_time_series(
+        "option_chain",
+        symbol=symbol,
+        timeframe=timeframe,
+        start=window_start,
+        end=cutoff,
+        timestamp_col="timestamp",
+    )
+    if prior.empty or "timestamp" not in prior.columns:
+        return pd.DataFrame()
+
+    prior["timestamp"] = pd.to_datetime(prior["timestamp"], errors="coerce")
+    prior = prior.dropna(subset=["timestamp"])
+    if prior.empty:
+        return pd.DataFrame()
+    latest_ts = prior["timestamp"].max()
+    return prior.loc[prior["timestamp"] == latest_ts].reset_index(drop=True)
+
+
+def _fetch_and_persist_option_chain(
+    *,
+    store: DataStore,
+    feed: KiteFeed,
+    symbol: str,
+    timeframe: str,
+    asof: datetime,
+    dte_min: int,
+    dte_max: int | None,
+) -> tuple[pd.DataFrame, datetime | None]:
+    expiry = _select_target_expiry(
+        feed=feed,
+        symbol=symbol,
+        asof=asof,
+        dte_min=dte_min,
+        dte_max=dte_max,
+    )
+    if expiry is None:
+        return pd.DataFrame(), None
+
+    chain = feed.get_option_chain(symbol=symbol, expiry=expiry, timestamp=asof)
+    chain_df = _frame_from_option_chain(source=feed.name, chain=chain)
+    if chain_df.empty:
+        return chain_df, expiry
+
+    store.write_time_series(
+        "option_chain",
+        chain_df,
+        symbol=symbol,
+        timeframe=timeframe,
+        timestamp_col="timestamp",
+        dedup_cols=OPTION_CHAIN_DEDUP_COLS,
+        source=feed.name,
+    )
+    return chain_df, expiry
+
+
 def main() -> int:
     if load_dotenv:
         load_dotenv(REPO_ROOT / ".env")
@@ -188,6 +361,13 @@ def main() -> int:
 
     feed = KiteFeed(api_key=api_key, access_token=access_token)
     store = DataStore(base_dir=str(cache_dir))
+    chain_dte_min, chain_dte_max = _option_chain_dte_bounds(settings)
+    previous_chain_df = _load_latest_option_chain_snapshot(
+        store=store,
+        symbol=args.symbol,
+        timeframe=args.timeframe,
+        before=now,
+    )
     classifier = RegimeClassifier(thresholds=RegimeThresholds.from_config(settings.get("regime", {})))
     router = StrategyRouter(strategies=build_strategies(settings))
     runtime = RegimeRuntime(
@@ -228,6 +408,8 @@ def main() -> int:
     print(f"symbol={args.symbol} timeframe={args.timeframe} iterations={args.iterations}")
     print(f"cache_dir={cache_dir}")
     print(f"enabled_strategies={[s.name for s in router.strategies]}")
+    print(f"option_chain_dte_bounds=min={chain_dte_min} max={chain_dte_max if chain_dte_max is not None else 'none'}")
+    print(f"bootstrapped_previous_chain_rows={len(previous_chain_df)}")
 
     for i in range(args.iterations):
         if stop_requested:
@@ -250,26 +432,44 @@ def main() -> int:
 
             vix = _load_or_fetch_vix(store=store, feed=feed, start=start, end=loop_ts)
             fii = _load_or_fetch_fii(store=store, start=start, end=loop_ts)
+            chain_df, chain_expiry = _fetch_and_persist_option_chain(
+                store=store,
+                feed=feed,
+                symbol=args.symbol,
+                timeframe=args.timeframe,
+                asof=loop_ts,
+                dte_min=chain_dte_min,
+                dte_max=chain_dte_max,
+            )
 
             vix_series = vix["close"].astype("float64") if not vix.empty and "close" in vix.columns else None
             vix_value = float(vix_series.iloc[-1]) if vix_series is not None and not vix_series.empty else 0.0
             fii_net_3d = float(fii["fii_net"].tail(3).sum()) if not fii.empty and "fii_net" in fii.columns else 0.0
 
-            # TODO: Replace None chain placeholders with true option-chain snapshots once feed integration is ready.
-            # TODO: Persisted option-chain snapshots require composite-key dedup in DataStore before enabling writes.
             regime_signals = build_regime_signals(
                 timestamp=loop_ts,
                 candles=candles,
                 vix_value=vix_value,
                 vix_series=vix_series,
-                chain_df=None,
-                previous_chain_df=None,
+                chain_df=chain_df if not chain_df.empty else None,
+                previous_chain_df=previous_chain_df if not previous_chain_df.empty else None,
                 fii_net_3d=fii_net_3d,
             )
 
+            underlying_price = (
+                float(chain_df["underlying_price"].iloc[-1])
+                if not chain_df.empty and "underlying_price" in chain_df.columns
+                else float(candles["close"].iloc[-1])
+            )
             regime, transition_signals = runtime.process(regime_signals)
             strategy_signals = router.generate_signals(
-                market_data={"timestamp": loop_ts, "candles": candles, "vix": vix_value},
+                market_data={
+                    "timestamp": loop_ts,
+                    "candles": candles,
+                    "vix": vix_value,
+                    "option_chain": chain_df,
+                    "underlying_price": underlying_price,
+                },
                 regime=regime,
             )
             all_signals = transition_signals + strategy_signals
@@ -279,16 +479,19 @@ def main() -> int:
                     "timestamp": loop_ts,
                     "vix": vix_value,
                     "symbol": args.symbol,
-                    "close_price": float(candles["close"].iloc[-1]),
+                    "close_price": underlying_price,
                 },
             )
 
             print(
                 f"[{i + 1}/{args.iterations}] regime={regime.value} "
                 f"vix={vix_value:.2f} adx={regime_signals.adx_14:.2f} "
+                f"chain_rows={len(chain_df)} chain_expiry={(chain_expiry.date().isoformat() if chain_expiry else 'none')} "
                 f"transition_signals={len(transition_signals)} strategy_signals={len(strategy_signals)} "
                 f"fills={len(fills)}"
             )
+            if not chain_df.empty:
+                previous_chain_df = chain_df
         except (KiteFeedError, FiiDownloadError) as exc:
             print(f"[{i + 1}/{args.iterations}] data unavailable: {exc}")
         except Exception as exc:

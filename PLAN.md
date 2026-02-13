@@ -45,17 +45,17 @@
 - [x] Phase 4 backtest stack (`scripts/run_backtest.py`) with walk-forward, anti-overfitting checks, and report generation scaffolding
 - [x] Phase 5 initial strategy set in code (`iron_condor`, `momentum`, `regime_probe`) with unit coverage
 - [x] Paper runtime scaffold (`scripts/run_paper.py`) with persisted regime snapshots/transitions
-- [x] Current automated test baseline green (`78 passed`)
+- [x] Current automated test baseline green (`80 passed`)
 
 ### Immediate TODOs (Added)
-- [ ] **Next step:** wire real Kite option-chain snapshots into `scripts/run_paper.py` (`chain_df` and `previous_chain_df` instead of placeholders).
+- [x] Wire real Kite option-chain snapshots into `scripts/run_paper.py` (`chain_df` and `previous_chain_df`) and persist snapshots into cache.
 - [ ] Replace remaining `NoOpStrategy` usage in `scripts/run_paper.py` with explicit strategy classes or fail-fast config validation.
 - [x] Move paper/runtime and historical ingest paths to Kite-only provider wiring (`scripts/run_paper.py`, `scripts/download_historical.py`).
 - [x] Replace multi-provider health check with Kite-focused checks (auth/profile + quote smoke checks).
 - [x] Remove legacy `src/data/free_feed.py` module and free-data dependencies.
 - [ ] Keep `src/data/truedata_feed.py` as optional standby feed; add integration hooks only when needed.
 - [x] Add cron-ready daily maintenance workflow (`scripts/daily_maintenance.py` + `config/cron/daily_maintenance.crontab.example`).
-- [ ] **Data-store TODO:** implement composite-key dedup for option-chain persistence (timestamp-only dedup is insufficient).
+- [x] Implement composite-key dedup support in `DataStore` for option-chain persistence (`timestamp + expiry + strike + option_type`).
 - [ ] Add `paper_fills` daily P&L/reporting script (fills, fees, gross/net by day/strategy).
 - [ ] **Visual review step:** run replay notebook/report and manually verify regime labels vs chart context before strategy comparisons.
 
@@ -63,8 +63,8 @@
 - [x] Add/confirm hysteresis + smoothing behavior tests in classifier to reduce flip-flops in transition zone.
 - [x] Prove strict no-lookahead regime computation path for historical replay.
 - [x] Run an end-to-end dry replay path that logs regime transitions and supports sanity validation (`scripts/replay_regime.py`).
-- [ ] Replace placeholder option-chain inputs in paper runtime with live Kite chain snapshots.
-- [ ] Implement option-chain persistence with composite-key dedup (timestamp + expiry + strike + option_type) before historical chain backtests.
+- [x] Replace placeholder option-chain inputs in paper runtime with live Kite chain snapshots.
+- [x] Implement option-chain persistence with composite-key dedup (timestamp + expiry + strike + option_type) before historical chain backtests.
 - [ ] Add a Kite-backed paper-loop acceptance runbook (open, intraday, close checks).
 - [ ] Convert replay outputs into final notebook artifact for visual inspection (optional packaging task; not a code blocker).
 

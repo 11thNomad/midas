@@ -10,6 +10,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Iterable
 
 import pandas as pd
 
@@ -88,19 +89,28 @@ class DataStore:
         symbol: str | None = None,
         timeframe: str | None = None,
         timestamp_col: str = "timestamp",
+        dedup_cols: list[str] | None = None,
         source: str = "unknown",
     ) -> int:
         """Write/merge a timeseries dataset as yearly parquet partitions.
 
+        Args:
+            dedup_cols:
+                Optional uniqueness key columns used for upsert deduplication.
+                Defaults to [timestamp_col]. When provided, timestamp_col is always included.
+
         Returns:
             Number of net-new rows added after deduplication/upsert.
         """
-        # TODO: Add dataset-specific dedup keys. Current upsert deduplicates only by timestamp,
-        # which is insufficient for option-chain rows (needs composite key like timestamp+expiry+strike+type).
         if df.empty:
             return 0
 
         normalized = self._ensure_ts(df, timestamp_col)
+        dedup_subset = self._resolve_dedup_subset(
+            df=normalized,
+            timestamp_col=timestamp_col,
+            dedup_cols=dedup_cols,
+        )
         normalized["_year"] = normalized[timestamp_col].dt.year
 
         target_dir = self._dataset_dir(dataset, symbol, timeframe, create=True)
@@ -112,17 +122,15 @@ class DataStore:
             if part_path.exists():
                 existing = pd.read_parquet(part_path)
                 existing[timestamp_col] = pd.to_datetime(existing[timestamp_col], errors="coerce")
-                existing = existing.dropna(subset=[timestamp_col]).drop_duplicates(
-                    subset=[timestamp_col], keep="last"
-                )
+                existing = existing.dropna(subset=[timestamp_col]).drop_duplicates(subset=dedup_subset, keep="last")
                 existing_len = len(existing)
                 combined = pd.concat([existing, part], ignore_index=True)
                 combined[timestamp_col] = pd.to_datetime(combined[timestamp_col], errors="coerce")
                 combined = combined.dropna(subset=[timestamp_col])
-                combined = combined.sort_values(timestamp_col).drop_duplicates(subset=[timestamp_col], keep="last")
+                combined = combined.sort_values(timestamp_col).drop_duplicates(subset=dedup_subset, keep="last")
             else:
                 existing_len = 0
-                combined = part.sort_values(timestamp_col).drop_duplicates(subset=[timestamp_col], keep="last")
+                combined = part.sort_values(timestamp_col).drop_duplicates(subset=dedup_subset, keep="last")
 
             combined.to_parquet(part_path, index=False)
             rows_upserted += max(len(combined) - existing_len, 0)
@@ -140,6 +148,30 @@ class DataStore:
         )
 
         return rows_upserted
+
+    @staticmethod
+    def _resolve_dedup_subset(
+        *,
+        df: pd.DataFrame,
+        timestamp_col: str,
+        dedup_cols: Iterable[str] | None,
+    ) -> list[str]:
+        requested = [col.strip() for col in (dedup_cols or [timestamp_col]) if str(col).strip()]
+        if timestamp_col not in requested:
+            requested.append(timestamp_col)
+
+        seen: set[str] = set()
+        subset: list[str] = []
+        for col in requested:
+            if col in seen:
+                continue
+            seen.add(col)
+            subset.append(col)
+
+        missing = [col for col in subset if col not in df.columns]
+        if missing:
+            raise ValueError(f"Dedup columns missing from dataset: {missing}")
+        return subset
 
     def read_time_series(
         self,

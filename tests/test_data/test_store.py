@@ -60,6 +60,61 @@ def test_upsert_deduplicates_and_reports_net_new_rows(tmp_path):
     assert loaded.loc[loaded["timestamp"] == pd.Timestamp("2026-01-03"), "value"].iloc[0] == 3
 
 
+def test_upsert_with_composite_dedup_columns(tmp_path):
+    store = DataStore(base_dir=str(tmp_path / "cache"))
+
+    first = pd.DataFrame(
+        {
+            "timestamp": pd.to_datetime(["2026-01-03 10:00", "2026-01-03 10:00"]),
+            "expiry": pd.to_datetime(["2026-01-08", "2026-01-08"]),
+            "strike": [25000.0, 25100.0],
+            "option_type": ["CE", "CE"],
+            "oi": [100, 200],
+        }
+    )
+    second = pd.DataFrame(
+        {
+            "timestamp": pd.to_datetime(["2026-01-03 10:00", "2026-01-03 10:00"]),
+            "expiry": pd.to_datetime(["2026-01-08", "2026-01-08"]),
+            "strike": [25100.0, 25200.0],
+            "option_type": ["CE", "CE"],
+            "oi": [220, 150],
+        }
+    )
+
+    dedup_cols = ["timestamp", "expiry", "strike", "option_type"]
+    assert store.write_time_series("option_chain", first, dedup_cols=dedup_cols) == 2
+    assert store.write_time_series("option_chain", second, dedup_cols=dedup_cols) == 1
+
+    loaded = store.read_time_series("option_chain")
+    assert len(loaded) == 3
+    replaced = loaded.loc[
+        (loaded["timestamp"] == pd.Timestamp("2026-01-03 10:00"))
+        & (loaded["expiry"] == pd.Timestamp("2026-01-08"))
+        & (loaded["strike"] == 25100.0)
+        & (loaded["option_type"] == "CE"),
+        "oi",
+    ]
+    assert len(replaced) == 1
+    assert int(replaced.iloc[0]) == 220
+
+
+def test_write_time_series_raises_for_missing_dedup_column(tmp_path):
+    store = DataStore(base_dir=str(tmp_path / "cache"))
+    df = pd.DataFrame(
+        {
+            "timestamp": pd.to_datetime(["2026-01-03"]),
+            "value": [1],
+        }
+    )
+    try:
+        store.write_time_series("custom", df, dedup_cols=["timestamp", "missing_col"])
+    except ValueError as exc:
+        assert "missing_col" in str(exc)
+        return
+    raise AssertionError("Expected ValueError for missing dedup column")
+
+
 def test_count_rows_reads_parquet_metadata(tmp_path):
     store = DataStore(base_dir=str(tmp_path / "cache"))
     directory = store._dataset_dir("row_count_test")

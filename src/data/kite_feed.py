@@ -26,6 +26,7 @@ class KiteFeed(DataFeed):
     name: str = "kite"
     _kite: Any = field(init=False, repr=False)
     _instruments: list[dict] | None = field(default=None, init=False, repr=False)
+    _option_expiry_cache: dict[str, list[datetime]] = field(default_factory=dict, init=False, repr=False)
 
     _INTERVAL_MAP = {
         "1m": "minute",
@@ -174,6 +175,30 @@ class KiteFeed(DataFeed):
         payload = self._kite.quote([quote_symbol])
         data = payload.get(quote_symbol, {})
         return float(data.get("last_price", 0.0) or 0.0)
+
+    def get_option_expiries(self, symbol: str, *, start: datetime | None = None) -> list[datetime]:
+        """Return sorted option expiries for an underlying symbol."""
+        target_name = symbol.upper()
+        cached = self._option_expiry_cache.get(target_name)
+        if cached is None:
+            values: set[datetime] = set()
+            for row in self._load_instruments():
+                if row.get("segment") != "NFO-OPT":
+                    continue
+                if str(row.get("name", "")).upper() != target_name:
+                    continue
+                raw_expiry = row.get("expiry")
+                if raw_expiry is None:
+                    continue
+                values.add(pd.Timestamp(raw_expiry).normalize().to_pydatetime())
+            cached = sorted(values)
+            self._option_expiry_cache[target_name] = cached
+
+        if start is None:
+            return list(cached)
+
+        start_day = start.date()
+        return [expiry for expiry in cached if expiry.date() >= start_day]
 
     def get_option_chain(
         self,
