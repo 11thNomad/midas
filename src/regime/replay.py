@@ -7,7 +7,7 @@ from datetime import datetime
 
 import pandas as pd
 
-from src.regime.classifier import RegimeClassifier, RegimeSignals
+from src.regime.classifier import RegimeClassifier
 from src.signals.regime import build_regime_signals
 
 
@@ -32,7 +32,9 @@ def replay_regimes_no_lookahead(
 
     candles_sorted = candles.copy()
     candles_sorted["timestamp"] = pd.to_datetime(candles_sorted["timestamp"], errors="coerce")
-    candles_sorted = candles_sorted.dropna(subset=["timestamp"]).sort_values("timestamp").reset_index(drop=True)
+    candles_sorted = (
+        candles_sorted.dropna(subset=["timestamp"]).sort_values("timestamp").reset_index(drop=True)
+    )
 
     vix_frame = _prep_vix(vix_df)
     fii_frame = _prep_fii(fii_df)
@@ -46,7 +48,9 @@ def replay_regimes_no_lookahead(
 
         vix_hist = _slice_by_ts(vix_frame, current_ts, "timestamp")
         vix_series = vix_hist["close"].astype("float64") if not vix_hist.empty else None
-        vix_value = float(vix_series.iloc[-1]) if vix_series is not None and not vix_series.empty else 0.0
+        vix_value = (
+            float(vix_series.iloc[-1]) if vix_series is not None and not vix_series.empty else 0.0
+        )
 
         fii_hist = _slice_by_ts(fii_frame, current_ts, "date")
         fii_net_3d = float(fii_hist["fii_net"].tail(3).sum()) if not fii_hist.empty else 0.0
@@ -69,8 +73,16 @@ def replay_regimes_no_lookahead(
 
     transitions = pd.DataFrame(classifier.history)
     snapshots_df = pd.DataFrame(snapshots)
-    snapshots_df = _filter_from_analysis_start(snapshots_df, timestamp_col="timestamp", analysis_start=analysis_start)
-    transitions = _filter_from_analysis_start(transitions, timestamp_col="timestamp", analysis_start=analysis_start)
+    snapshots_df = _filter_from_analysis_start(
+        snapshots_df,
+        timestamp_col="timestamp",
+        analysis_start=analysis_start,
+    )
+    transitions = _filter_from_analysis_start(
+        transitions,
+        timestamp_col="timestamp",
+        analysis_start=analysis_start,
+    )
     return ReplayResult(snapshots=snapshots_df, transitions=transitions)
 
 

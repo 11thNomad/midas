@@ -32,7 +32,6 @@ from src.data.fii import FiiDownloadError, fetch_fii_dii
 from src.data.kite_feed import KiteFeed, KiteFeedError
 from src.data.store import DataStore
 from src.execution import PaperExecutionEngine
-from src.risk.circuit_breaker import CircuitBreaker
 from src.regime import (
     RegimeClassifier,
     RegimeRuntime,
@@ -40,10 +39,11 @@ from src.regime import (
     RegimeThresholds,
     StrategyTransitionStore,
 )
+from src.risk.circuit_breaker import CircuitBreaker
 from src.signals.regime import build_regime_signals
+from src.strategies.base import BaseStrategy
 from src.strategies.iron_condor import IronCondorStrategy
 from src.strategies.momentum import MomentumStrategy
-from src.strategies.base import BaseStrategy
 from src.strategies.regime_probe import RegimeProbeStrategy
 from src.strategies.router import StrategyRouter
 
@@ -56,7 +56,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--timeframe", default="5m", help="Candle timeframe (e.g., 5m, 1d)")
     parser.add_argument("--iterations", type=int, default=1, help="Number of loop iterations")
     parser.add_argument("--sleep-seconds", type=int, default=15, help="Sleep between iterations")
-    parser.add_argument("--lookback-days", type=int, default=180, help="History window for signal computation")
+    parser.add_argument(
+        "--lookback-days", type=int, default=180, help="History window for signal computation"
+    )
     parser.add_argument("--settings", default="config/settings.yaml", help="Settings YAML path")
     return parser.parse_args()
 
@@ -116,11 +118,15 @@ def _load_or_fetch_candles(
     fetched = feed.get_candles(symbol=symbol, timeframe=timeframe, start=start, end=end)
     if fetched.empty:
         return fetched
-    store.write_time_series("candles", fetched, symbol=symbol, timeframe=timeframe, source=feed.name)
+    store.write_time_series(
+        "candles", fetched, symbol=symbol, timeframe=timeframe, source=feed.name
+    )
     return fetched
 
 
-def _load_or_fetch_vix(*, store: DataStore, feed: KiteFeed, start: datetime, end: datetime) -> pd.DataFrame:
+def _load_or_fetch_vix(
+    *, store: DataStore, feed: KiteFeed, start: datetime, end: datetime
+) -> pd.DataFrame:
     vix = store.read_time_series("vix", symbol="INDIAVIX", timeframe="1d", start=start, end=end)
     if not vix.empty:
         return vix
@@ -225,7 +231,7 @@ def _frame_from_option_chain(*, source: str, chain) -> pd.DataFrame:
         )
 
     rows: list[dict] = []
-    for dto, contract in zip(dtos, chain.contracts):
+    for dto, contract in zip(dtos, chain.contracts, strict=False):
         rows.append(
             {
                 "timestamp": dto.timestamp,
@@ -257,7 +263,9 @@ def _frame_from_option_chain(*, source: str, chain) -> pd.DataFrame:
     frame["strike"] = pd.to_numeric(frame["strike"], errors="coerce")
     frame["option_type"] = frame["option_type"].astype(str).str.upper()
     frame = frame.dropna(subset=["timestamp", "expiry", "strike"])
-    return frame.sort_values(["timestamp", "expiry", "strike", "option_type"]).reset_index(drop=True)
+    return frame.sort_values(["timestamp", "expiry", "strike", "option_type"]).reset_index(
+        drop=True
+    )
 
 
 def _load_latest_option_chain_snapshot(
@@ -352,7 +360,9 @@ def main() -> int:
         timeframe=args.timeframe,
         before=now,
     )
-    classifier = RegimeClassifier(thresholds=RegimeThresholds.from_config(settings.get("regime", {})))
+    classifier = RegimeClassifier(
+        thresholds=RegimeThresholds.from_config(settings.get("regime", {}))
+    )
     router = StrategyRouter(strategies=build_strategies(settings))
     runtime = RegimeRuntime(
         classifier=classifier,
@@ -392,7 +402,8 @@ def main() -> int:
     print(f"symbol={args.symbol} timeframe={args.timeframe} iterations={args.iterations}")
     print(f"cache_dir={cache_dir}")
     print(f"enabled_strategies={[s.name for s in router.strategies]}")
-    print(f"option_chain_dte_bounds=min={chain_dte_min} max={chain_dte_max if chain_dte_max is not None else 'none'}")
+    chain_dte_max_label = chain_dte_max if chain_dte_max is not None else "none"
+    print(f"option_chain_dte_bounds=min={chain_dte_min} max={chain_dte_max_label}")
     print(f"bootstrapped_previous_chain_rows={len(previous_chain_df)}")
 
     for i in range(args.iterations):
@@ -426,9 +437,19 @@ def main() -> int:
                 dte_max=chain_dte_max,
             )
 
-            vix_series = vix["close"].astype("float64") if not vix.empty and "close" in vix.columns else None
-            vix_value = float(vix_series.iloc[-1]) if vix_series is not None and not vix_series.empty else 0.0
-            fii_net_3d = float(fii["fii_net"].tail(3).sum()) if not fii.empty and "fii_net" in fii.columns else 0.0
+            vix_series = (
+                vix["close"].astype("float64") if not vix.empty and "close" in vix.columns else None
+            )
+            vix_value = (
+                float(vix_series.iloc[-1])
+                if vix_series is not None and not vix_series.empty
+                else 0.0
+            )
+            fii_net_3d = (
+                float(fii["fii_net"].tail(3).sum())
+                if not fii.empty and "fii_net" in fii.columns
+                else 0.0
+            )
 
             regime_signals = build_regime_signals(
                 timestamp=loop_ts,
@@ -467,11 +488,13 @@ def main() -> int:
                 },
             )
 
+            chain_expiry_label = chain_expiry.date().isoformat() if chain_expiry else "none"
             print(
                 f"[{i + 1}/{args.iterations}] regime={regime.value} "
                 f"vix={vix_value:.2f} adx={regime_signals.adx_14:.2f} "
-                f"chain_rows={len(chain_df)} chain_expiry={(chain_expiry.date().isoformat() if chain_expiry else 'none')} "
-                f"transition_signals={len(transition_signals)} strategy_signals={len(strategy_signals)} "
+                f"chain_rows={len(chain_df)} chain_expiry={chain_expiry_label} "
+                f"transition_signals={len(transition_signals)} "
+                f"strategy_signals={len(strategy_signals)} "
                 f"fills={len(fills)}"
             )
             if not chain_df.empty:

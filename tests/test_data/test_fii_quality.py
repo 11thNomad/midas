@@ -52,7 +52,7 @@ def test_assess_candle_quality_detects_issues():
             ),
             "open": [100, 100, 100, 100],
             "high": [99, 101, 101, 101],  # invalid first row (high < open)
-            "low": [98, 99, 99, -1],      # invalid negative low on last row
+            "low": [98, 99, 99, -1],  # invalid negative low on last row
             "close": [100, 100, 100, 100],
             "volume": [10, 10, 10, 10],
         }

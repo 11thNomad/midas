@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Any, Iterable
+from typing import Any
 
 import pandas as pd
 
-from src.data.contracts import candle_dtos_from_frame, frame_from_candle_dtos, option_dtos_from_chain
+from src.data.contracts import (
+    candle_dtos_from_frame,
+    frame_from_candle_dtos,
+    option_dtos_from_chain,
+)
 from src.data.feed import DataFeed
 from src.data.schemas import InstrumentType, OptionChain, OptionContract
 
@@ -26,7 +31,9 @@ class KiteFeed(DataFeed):
     name: str = "kite"
     _kite: Any = field(init=False, repr=False)
     _instruments: list[dict] | None = field(default=None, init=False, repr=False)
-    _option_expiry_cache: dict[str, list[datetime]] = field(default_factory=dict, init=False, repr=False)
+    _option_expiry_cache: dict[str, list[datetime]] = field(
+        default_factory=dict, init=False, repr=False
+    )
 
     _INTERVAL_MAP = {
         "1m": "minute",
@@ -101,7 +108,9 @@ class KiteFeed(DataFeed):
 
         raise KiteFeedError(f"No Kite instrument token found for symbol='{symbol}'")
 
-    def _iter_chunks(self, start: datetime, end: datetime, interval: str) -> Iterable[tuple[datetime, datetime]]:
+    def _iter_chunks(
+        self, start: datetime, end: datetime, interval: str
+    ) -> Iterable[tuple[datetime, datetime]]:
         max_days = self._MAX_CHUNK_DAYS.get(interval, 30)
         cursor = start
         step = timedelta(days=max_days)
@@ -113,7 +122,9 @@ class KiteFeed(DataFeed):
     @staticmethod
     def _normalize_candles(rows: list[dict]) -> pd.DataFrame:
         if not rows:
-            return pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume", "oi"])
+            return pd.DataFrame(
+                columns=["timestamp", "open", "high", "low", "close", "volume", "oi"]
+            )
 
         frame = pd.DataFrame(rows)
         frame = frame.rename(columns={"date": "timestamp"})
@@ -251,7 +262,9 @@ class KiteFeed(DataFeed):
                     ask=ask,
                     volume=int(quote.get("volume", 0) or 0),
                     oi=int(quote.get("oi", 0) or 0),
-                    change_in_oi=int(quote.get("oi_day_high", 0) or 0),  # TODO: replace with true delta OI.
+                    change_in_oi=int(
+                        quote.get("oi_day_high", 0) or 0
+                    ),  # TODO: replace with true delta OI.
                 )
             )
 
@@ -271,4 +284,6 @@ class KiteFeed(DataFeed):
 
     def get_fii_data(self, start: datetime, end: datetime) -> pd.DataFrame:
         # TODO: Kite does not provide FII/DII cash-flow dataset. Keep using NSE pipeline.
-        raise NotImplementedError("FII flow data is not available via Kite. Use src.data.fii pipeline.")
+        raise NotImplementedError(
+            "FII flow data is not available via Kite. Use src.data.fii pipeline."
+        )

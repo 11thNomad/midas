@@ -128,13 +128,19 @@ def check_truedata_optional() -> bool:
         print("  [~] Credentials not configured; optional check skipped")
         return True
     if not username or not password:
-        print("  [X] Partial TrueData credentials found; set both TRUEDATA_USERNAME and TRUEDATA_PASSWORD")
+        print(
+            "  [X] Partial TrueData credentials found; "
+            "set both TRUEDATA_USERNAME and TRUEDATA_PASSWORD"
+        )
         return False
 
     try:
         __import__("truedata_ws")
     except ImportError:
-        print("  [~] truedata_ws is not installed (install vendor SDK if/when you enable TrueData fallback)")
+        print(
+            "  [~] truedata_ws is not installed "
+            "(install vendor SDK if/when you enable TrueData fallback)"
+        )
         return True
     except Exception as exc:
         print(f"  [X] TrueData SDK import failed: {exc}")
@@ -244,11 +250,17 @@ def main() -> None:
         return
 
     if dev_ready and args.skip_broker_checks:
-        print("\n  -> Ready for local development setup. Run without --skip-broker-checks for live API checks.")
+        print(
+            "\n  -> Ready for local development setup. "
+            "Run without --skip-broker-checks for live API checks."
+        )
         return
 
     if dev_ready and not live_api_ready:
-        print("\n  -> Dev environment is ready; complete Kite auth/connectivity before live checks pass.")
+        print(
+            "\n  -> Dev environment is ready; "
+            "complete Kite auth/connectivity before live checks pass."
+        )
         return
 
     print("\n  -> Fix critical issues above before continuing.")

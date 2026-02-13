@@ -112,7 +112,9 @@ def summarize_backtest(
         "initial_capital": float(initial_capital),
         "final_equity": final_equity,
         "total_return_pct": float(total_return_pct),
-        "annualized_return_pct": float(annualized_return_pct(equity, periods_per_year=periods_per_year)),
+        "annualized_return_pct": float(
+            annualized_return_pct(equity, periods_per_year=periods_per_year)
+        ),
         "max_drawdown_pct": float(max_drawdown_pct(equity)),
         "sharpe_ratio": float(
             sharpe_ratio(
@@ -129,7 +131,10 @@ def summarize_backtest(
             )
         ),
         "calmar_ratio": float(
-            (annualized_return_pct(equity, periods_per_year=periods_per_year) / max_drawdown_pct(equity))
+            (
+                annualized_return_pct(equity, periods_per_year=periods_per_year)
+                / max_drawdown_pct(equity)
+            )
             if max_drawdown_pct(equity) > 0
             else 0.0
         ),
@@ -150,27 +155,37 @@ def regime_segmented_returns(equity_curve: pd.DataFrame, regimes: pd.DataFrame) 
     required_eq = {"timestamp", "equity"}
     required_reg = {"timestamp", "regime"}
     if equity_curve.empty or regimes.empty:
-        return pd.DataFrame(columns=["regime", "bars", "mean_bar_return_pct", "cumulative_return_pct"])
+        return pd.DataFrame(
+            columns=["regime", "bars", "mean_bar_return_pct", "cumulative_return_pct"]
+        )
     if not required_eq.issubset(equity_curve.columns) or not required_reg.issubset(regimes.columns):
-        return pd.DataFrame(columns=["regime", "bars", "mean_bar_return_pct", "cumulative_return_pct"])
+        return pd.DataFrame(
+            columns=["regime", "bars", "mean_bar_return_pct", "cumulative_return_pct"]
+        )
 
     eq = equity_curve.copy()
     eq["timestamp"] = pd.to_datetime(eq["timestamp"], errors="coerce")
     eq["equity"] = pd.to_numeric(eq["equity"], errors="coerce")
     eq = eq.dropna(subset=["timestamp", "equity"]).sort_values("timestamp")
     if eq.empty:
-        return pd.DataFrame(columns=["regime", "bars", "mean_bar_return_pct", "cumulative_return_pct"])
+        return pd.DataFrame(
+            columns=["regime", "bars", "mean_bar_return_pct", "cumulative_return_pct"]
+        )
     eq["bar_return"] = eq["equity"].pct_change().fillna(0.0)
 
     reg = regimes.copy()
     reg["timestamp"] = pd.to_datetime(reg["timestamp"], errors="coerce")
     reg = reg.dropna(subset=["timestamp"]).sort_values("timestamp")
     if reg.empty:
-        return pd.DataFrame(columns=["regime", "bars", "mean_bar_return_pct", "cumulative_return_pct"])
+        return pd.DataFrame(
+            columns=["regime", "bars", "mean_bar_return_pct", "cumulative_return_pct"]
+        )
 
     merged = eq.merge(reg[["timestamp", "regime"]], on="timestamp", how="inner")
     if merged.empty:
-        return pd.DataFrame(columns=["regime", "bars", "mean_bar_return_pct", "cumulative_return_pct"])
+        return pd.DataFrame(
+            columns=["regime", "bars", "mean_bar_return_pct", "cumulative_return_pct"]
+        )
 
     rows: list[dict] = []
     for regime, grp in merged.groupby("regime"):

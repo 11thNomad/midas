@@ -32,12 +32,16 @@ class FillSimulator:
         if not signal.is_actionable:
             return []
 
-        orders = signal.orders or [{"symbol": signal.instrument, "action": self._default_action(signal), "quantity": 1}]
+        orders = signal.orders or [
+            {"symbol": signal.instrument, "action": self._default_action(signal), "quantity": 1}
+        ]
         fills: list[dict[str, Any]] = []
         for order in orders:
             side = str(order.get("action", self._default_action(signal))).upper()
             qty = int(order.get("quantity", 1) or 1)
-            raw_price = self._resolve_raw_price(order=order, default_price=close_price, price_lookup=price_lookup)
+            raw_price = self._resolve_raw_price(
+                order=order, default_price=close_price, price_lookup=price_lookup
+            )
             slip = raw_price * (self.slippage_pct / 100.0)
             price = raw_price + slip if side == "BUY" else max(0.0, raw_price - slip)
             notional = abs(price * qty)

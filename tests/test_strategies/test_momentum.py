@@ -24,13 +24,23 @@ def _candles_uptrend(n: int = 80) -> pd.DataFrame:
 def test_momentum_strategy_generates_actionable_signal_with_enough_data():
     strategy = MomentumStrategy(
         name="momentum",
-        config={"instrument": "NIFTY", "max_lots": 1, "fast_ema": 5, "slow_ema": 20, "adx_filter": 5},
+        config={
+            "instrument": "NIFTY",
+            "max_lots": 1,
+            "fast_ema": 5,
+            "slow_ema": 20,
+            "adx_filter": 5,
+        },
     )
     signal = strategy.generate_signal(
         market_data={"timestamp": datetime(2026, 3, 1), "candles": _candles_uptrend()},
         regime=RegimeState.LOW_VOL_TRENDING,
     )
-    assert signal.signal_type in {SignalType.ENTRY_LONG, SignalType.ENTRY_SHORT, SignalType.NO_SIGNAL}
+    assert signal.signal_type in {
+        SignalType.ENTRY_LONG,
+        SignalType.ENTRY_SHORT,
+        SignalType.NO_SIGNAL,
+    }
 
 
 def test_momentum_strategy_returns_no_signal_when_insufficient_data():

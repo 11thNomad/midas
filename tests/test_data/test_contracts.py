@@ -84,5 +84,13 @@ def test_fii_dto_roundtrip_has_expected_columns():
     )
     dtos = fii_dtos_from_frame(frame, source="test")
     out = frame_from_fii_dtos(dtos)
-    assert list(out.columns) == ["date", "fii_buy", "fii_sell", "fii_net", "dii_buy", "dii_sell", "dii_net"]
+    assert list(out.columns) == [
+        "date",
+        "fii_buy",
+        "fii_sell",
+        "fii_net",
+        "dii_buy",
+        "dii_sell",
+        "dii_net",
+    ]
     assert len(out) == 2

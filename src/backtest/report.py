@@ -57,7 +57,9 @@ def write_walkforward_report(
 
     folds.to_csv(folds_csv, index=False)
     summary_json.write_text(json.dumps(summary, indent=2, sort_keys=True))
-    html_path.write_text(_render_walkforward_html(folds=folds, summary=summary, regime_table=regime_table))
+    html_path.write_text(
+        _render_walkforward_html(folds=folds, summary=summary, regime_table=regime_table)
+    )
 
     return {
         "folds_csv": str(folds_csv),
@@ -91,8 +93,12 @@ def _render_walkforward_html(
     summary: dict[str, float],
     regime_table: pd.DataFrame | None = None,
 ) -> str:
-    summary_rows = "\n".join(f"<tr><td>{k}</td><td>{v:.6f}</td></tr>" for k, v in sorted(summary.items()))
-    folds_table = folds.to_html(index=False, border=1) if not folds.empty else "<p>No fold rows.</p>"
+    summary_rows = "\n".join(
+        f"<tr><td>{k}</td><td>{v:.6f}</td></tr>" for k, v in sorted(summary.items())
+    )
+    folds_table = (
+        folds.to_html(index=False, border=1) if not folds.empty else "<p>No fold rows.</p>"
+    )
     regime_section = "<p>No regime-segmented table.</p>"
     if regime_table is not None and not regime_table.empty:
         regime_section = regime_table.to_html(index=False, border=1)

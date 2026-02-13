@@ -7,6 +7,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import signal
@@ -91,10 +92,8 @@ def main() -> int:
     def _request_stop(_signum=None, _frame=None):
         nonlocal stop_requested
         stop_requested = True
-        try:
+        with contextlib.suppress(Exception):
             kws.stop()
-        except Exception:
-            pass
 
     signal.signal(signal.SIGINT, _request_stop)
     signal.signal(signal.SIGTERM, _request_stop)
@@ -132,4 +131,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

@@ -27,7 +27,6 @@ from src.data.fii import FiiDownloadError, fetch_fii_dii
 from src.data.kite_feed import KiteFeed, KiteFeedError
 from src.data.store import DataStore
 
-
 DEFAULT_FULL_SYMBOLS = ["NIFTY", "BANKNIFTY"]
 DEFAULT_FULL_TIMEFRAMES = ["1d", "5m"]
 
@@ -38,12 +37,20 @@ def parse_date(value: str) -> datetime:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Download historical market datasets.")
-    parser.add_argument("--symbol", action="append", dest="symbols", help="Symbol to download. Repeatable.")
-    parser.add_argument("--timeframe", action="append", dest="timeframes", help="Timeframe (e.g., 1d, 5m).")
+    parser.add_argument(
+        "--symbol", action="append", dest="symbols", help="Symbol to download. Repeatable."
+    )
+    parser.add_argument(
+        "--timeframe", action="append", dest="timeframes", help="Timeframe (e.g., 1d, 5m)."
+    )
     parser.add_argument("--start", type=parse_date, help="Start date (YYYY-MM-DD).")
     parser.add_argument("--end", type=parse_date, help="End date (YYYY-MM-DD).")
-    parser.add_argument("--days", type=int, default=0, help="Shortcut for end=today and start=today-days.")
-    parser.add_argument("--full", action="store_true", help="Use full preset for Phase 1 cache bootstrap.")
+    parser.add_argument(
+        "--days", type=int, default=0, help="Shortcut for end=today and start=today-days."
+    )
+    parser.add_argument(
+        "--full", action="store_true", help="Use full preset for Phase 1 cache bootstrap."
+    )
     parser.add_argument("--skip-vix", action="store_true", help="Skip India VIX series download.")
     parser.add_argument("--skip-fii", action="store_true", help="Skip FII/DII flow ingest.")
     parser.add_argument(

@@ -128,7 +128,9 @@ def summarize_sensitivity_results(
         }
 
     frame = pd.DataFrame(variant_rows)
-    returns = pd.to_numeric(frame.get("total_return_pct", pd.Series(dtype="float64")), errors="coerce").dropna()
+    returns = pd.to_numeric(
+        frame.get("total_return_pct", pd.Series(dtype="float64")), errors="coerce"
+    ).dropna()
     if returns.empty:
         return {
             "variant_count": float(len(frame)),
@@ -184,5 +186,7 @@ def aggregate_cross_instrument_results(rows: list[dict]) -> pd.DataFrame:
         max_drawdown_pct_mean=("max_drawdown_pct", "mean"),
         anti_overfit_pass_share=("anti_overfit_pass", "mean"),
     )
-    grouped["symbols_positive_return_share"] = grouped["symbols_positive_return"] / grouped["symbols_tested"].replace(0, pd.NA)
+    grouped["symbols_positive_return_share"] = grouped["symbols_positive_return"] / grouped[
+        "symbols_tested"
+    ].replace(0, pd.NA)
     return grouped.sort_values("strategy").reset_index(drop=True)

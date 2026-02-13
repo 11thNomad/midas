@@ -84,7 +84,11 @@ def test_engine_runs_and_produces_equity_and_fills():
     )
     strategy = OneShotStrategy(
         name="oneshot",
-        config={"instrument": "NIFTY", "active_regimes": [RegimeState.LOW_VOL_RANGING.value], "exit_ts": datetime(2026, 1, 3)},
+        config={
+            "instrument": "NIFTY",
+            "active_regimes": [RegimeState.LOW_VOL_RANGING.value],
+            "exit_ts": datetime(2026, 1, 3),
+        },
     )
     engine = BacktestEngine(
         classifier=RegimeClassifier(thresholds=RegimeThresholds()),
@@ -113,7 +117,12 @@ def test_engine_passes_latest_option_chain_snapshot_to_strategy():
     chain = pd.DataFrame(
         {
             "timestamp": pd.to_datetime(
-                ["2026-01-01 00:00:00", "2026-01-01 00:00:00", "2026-01-03 00:00:00", "2026-01-03 00:00:00"]
+                [
+                    "2026-01-01 00:00:00",
+                    "2026-01-01 00:00:00",
+                    "2026-01-03 00:00:00",
+                    "2026-01-03 00:00:00",
+                ]
             ),
             "option_type": ["CE", "PE", "CE", "PE"],
             "strike": [22000, 22000, 22100, 21900],
@@ -193,7 +202,11 @@ def test_engine_passes_realized_and_unrealized_pnl_to_breaker():
     )
     strategy = OneShotStrategy(
         name="oneshot",
-        config={"instrument": "NIFTY", "active_regimes": [RegimeState.LOW_VOL_RANGING.value], "exit_ts": datetime(2026, 1, 3)},
+        config={
+            "instrument": "NIFTY",
+            "active_regimes": [RegimeState.LOW_VOL_RANGING.value],
+            "exit_ts": datetime(2026, 1, 3),
+        },
     )
 
     class CaptureBreaker:

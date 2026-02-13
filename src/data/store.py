@@ -6,11 +6,11 @@ import fcntl
 import json
 import os
 import tempfile
+from collections.abc import Iterable
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Iterable
 
 import pandas as pd
 
@@ -122,15 +122,21 @@ class DataStore:
             if part_path.exists():
                 existing = pd.read_parquet(part_path)
                 existing[timestamp_col] = pd.to_datetime(existing[timestamp_col], errors="coerce")
-                existing = existing.dropna(subset=[timestamp_col]).drop_duplicates(subset=dedup_subset, keep="last")
+                existing = existing.dropna(subset=[timestamp_col]).drop_duplicates(
+                    subset=dedup_subset, keep="last"
+                )
                 existing_len = len(existing)
                 combined = pd.concat([existing, part], ignore_index=True)
                 combined[timestamp_col] = pd.to_datetime(combined[timestamp_col], errors="coerce")
                 combined = combined.dropna(subset=[timestamp_col])
-                combined = combined.sort_values(timestamp_col).drop_duplicates(subset=dedup_subset, keep="last")
+                combined = combined.sort_values(timestamp_col).drop_duplicates(
+                    subset=dedup_subset, keep="last"
+                )
             else:
                 existing_len = 0
-                combined = part.sort_values(timestamp_col).drop_duplicates(subset=dedup_subset, keep="last")
+                combined = part.sort_values(timestamp_col).drop_duplicates(
+                    subset=dedup_subset, keep="last"
+                )
 
             combined.to_parquet(part_path, index=False)
             rows_upserted += max(len(combined) - existing_len, 0)

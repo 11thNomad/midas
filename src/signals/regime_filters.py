@@ -16,7 +16,9 @@ def vix_regime_band(vix: pd.Series, low: float = 14.0, high: float = 18.0) -> pd
     return vix.apply(band)
 
 
-def adx_regime_band(adx_values: pd.Series, ranging: float = 20.0, trending: float = 25.0) -> pd.Series:
+def adx_regime_band(
+    adx_values: pd.Series, ranging: float = 20.0, trending: float = 25.0
+) -> pd.Series:
     def band(value: float) -> str:
         if value < ranging:
             return "ranging"

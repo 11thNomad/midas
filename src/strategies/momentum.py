@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from datetime import datetime
 
-import pandas as pd
-
 from src.signals import trend
 from src.strategies.base import BaseStrategy, RegimeState, Signal, SignalType
 
@@ -106,7 +104,9 @@ class MomentumStrategy(BaseStrategy):
     def compute_position_size(self, capital: float, risk_per_trade: float) -> int:
         return int(self.config.get("max_lots", 1) or 1)
 
-    def _no_signal(self, ts: datetime, regime: RegimeState, instrument: str, *, reason: str) -> Signal:
+    def _no_signal(
+        self, ts: datetime, regime: RegimeState, instrument: str, *, reason: str
+    ) -> Signal:
         return Signal(
             signal_type=SignalType.NO_SIGNAL,
             strategy_name=self.name,

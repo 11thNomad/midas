@@ -32,7 +32,9 @@ def test_router_deactivates_strategy_outside_regime_and_emits_exit():
     strategy.state.is_active = True
 
     router = StrategyRouter(strategies=[strategy], current_regime=RegimeState.LOW_VOL_TRENDING)
-    transition_signals = router.on_regime_change(RegimeState.HIGH_VOL_CHOPPY, timestamp=datetime(2026, 1, 1))
+    transition_signals = router.on_regime_change(
+        RegimeState.HIGH_VOL_CHOPPY, timestamp=datetime(2026, 1, 1)
+    )
 
     assert strategy.state.is_active is False
     assert len(transition_signals) == 1
@@ -47,7 +49,9 @@ def test_router_activates_strategy_when_regime_matches():
     strategy.state.is_active = False
 
     router = StrategyRouter(strategies=[strategy], current_regime=RegimeState.HIGH_VOL_CHOPPY)
-    transition_signals = router.on_regime_change(RegimeState.LOW_VOL_TRENDING, timestamp=datetime(2026, 1, 1))
+    transition_signals = router.on_regime_change(
+        RegimeState.LOW_VOL_TRENDING, timestamp=datetime(2026, 1, 1)
+    )
 
     assert transition_signals == []
     assert strategy.state.is_active is True

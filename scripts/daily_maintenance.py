@@ -2,7 +2,8 @@
 
 Examples:
   python scripts/daily_maintenance.py
-  python scripts/daily_maintenance.py --days 2 --symbols NIFTY,BANKNIFTY --timeframes 5m,1d --strict-quality
+  python scripts/daily_maintenance.py --days 2 --symbols NIFTY,BANKNIFTY \\
+      --timeframes 5m,1d --strict-quality
 """
 
 from __future__ import annotations

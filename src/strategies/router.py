@@ -37,7 +37,9 @@ class StrategyRouter:
                 strategy.state.is_active = True
 
             if not should_be_active and was_active:
-                exit_signal = strategy.on_regime_change(old_regime=old_regime, new_regime=new_regime)
+                exit_signal = strategy.on_regime_change(
+                    old_regime=old_regime, new_regime=new_regime
+                )
                 strategy.state.is_active = False
                 if exit_signal is not None:
                     out.append(exit_signal)

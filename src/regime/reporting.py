@@ -17,7 +17,9 @@ def summarize_regime_daily(snapshots: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame(columns=["date", "regime", "snapshots"])
 
     out["date"] = out["timestamp"].dt.date
-    grouped = out.groupby(["date", "regime"], as_index=False).size().rename(columns={"size": "snapshots"})
+    grouped = (
+        out.groupby(["date", "regime"], as_index=False).size().rename(columns={"size": "snapshots"})
+    )
     return grouped.sort_values(["date", "regime"]).reset_index(drop=True)
 
 
@@ -34,8 +36,12 @@ def summarize_transitions_daily(transitions: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame(columns=["date", "activations", "deactivations", "events"])
 
     out["date"] = out["timestamp"].dt.date
-    out["activation"] = (~out["from_active"].astype(bool) & out["to_active"].astype(bool)).astype(int)
-    out["deactivation"] = (out["from_active"].astype(bool) & ~out["to_active"].astype(bool)).astype(int)
+    out["activation"] = (~out["from_active"].astype(bool) & out["to_active"].astype(bool)).astype(
+        int
+    )
+    out["deactivation"] = (out["from_active"].astype(bool) & ~out["to_active"].astype(bool)).astype(
+        int
+    )
 
     grouped = out.groupby("date", as_index=False).agg(
         activations=("activation", "sum"),
@@ -52,8 +58,12 @@ def summarize_transitions_by_strategy(transitions: pd.DataFrame) -> pd.DataFrame
         return pd.DataFrame(columns=["strategy", "activations", "deactivations", "events"])
 
     out = transitions.copy()
-    out["activation"] = (~out["from_active"].astype(bool) & out["to_active"].astype(bool)).astype(int)
-    out["deactivation"] = (out["from_active"].astype(bool) & ~out["to_active"].astype(bool)).astype(int)
+    out["activation"] = (~out["from_active"].astype(bool) & out["to_active"].astype(bool)).astype(
+        int
+    )
+    out["deactivation"] = (out["from_active"].astype(bool) & ~out["to_active"].astype(bool)).astype(
+        int
+    )
 
     grouped = out.groupby("strategy", as_index=False).agg(
         activations=("activation", "sum"),

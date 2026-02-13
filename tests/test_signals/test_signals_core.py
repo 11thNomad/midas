@@ -2,7 +2,14 @@ from __future__ import annotations
 
 import pandas as pd
 
-from src.signals import composite, mean_reversion, options_signals, regime_filters, trend, volatility
+from src.signals import (
+    composite,
+    mean_reversion,
+    options_signals,
+    regime_filters,
+    trend,
+    volatility,
+)
 
 
 def test_ema_crossover_returns_binary_signal():

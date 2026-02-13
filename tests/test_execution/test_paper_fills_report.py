@@ -42,7 +42,8 @@ def test_summarize_daily_fills_groups_by_day_and_strategy():
     assert len(daily) == 3
 
     row_ic_day1 = daily.loc[
-        (daily["date"] == pd.Timestamp("2026-02-10").date()) & (daily["strategy_name"] == "iron_condor")
+        (daily["date"] == pd.Timestamp("2026-02-10").date())
+        & (daily["strategy_name"] == "iron_condor")
     ].iloc[0]
     assert int(row_ic_day1["fill_count"]) == 2
     assert float(row_ic_day1["gross_cashflow"]) == 300.0
@@ -50,7 +51,8 @@ def test_summarize_daily_fills_groups_by_day_and_strategy():
     assert float(row_ic_day1["net_cashflow"]) == 260.0
 
     row_mom_day1 = daily.loc[
-        (daily["date"] == pd.Timestamp("2026-02-10").date()) & (daily["strategy_name"] == "momentum")
+        (daily["date"] == pd.Timestamp("2026-02-10").date())
+        & (daily["strategy_name"] == "momentum")
     ].iloc[0]
     assert float(row_mom_day1["gross_cashflow"]) == -500.0
     assert float(row_mom_day1["net_cashflow"]) == -515.0

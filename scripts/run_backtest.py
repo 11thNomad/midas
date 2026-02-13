@@ -50,7 +50,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--symbols",
         action="append",
-        help="Optional cross-instrument symbols; repeatable or comma-separated (e.g. NIFTY,BANKNIFTY)",
+        help=(
+            "Optional cross-instrument symbols; repeatable or comma-separated "
+            "(e.g. NIFTY,BANKNIFTY)"
+        ),
     )
     parser.add_argument("--timeframe", default="1d", help="Candle timeframe partition")
     parser.add_argument("--from", dest="start", type=parse_date, help="Start date YYYY-MM-DD")
@@ -59,16 +62,28 @@ def parse_args() -> argparse.Namespace:
         "--indicator-warmup-days",
         type=int,
         default=0,
-        help="Extra days loaded before --from to warm indicators (excluded from backtest metrics/trades).",
+        help=(
+            "Extra days loaded before --from to warm indicators "
+            "(excluded from backtest metrics/trades)."
+        ),
     )
     parser.add_argument(
         "--strategy",
         action="append",
         dest="strategies",
-        help="Strategy id; repeatable or comma-separated (available: regime_probe, momentum, iron_condor)",
+        help=(
+            "Strategy id; repeatable or comma-separated "
+            "(available: regime_probe, momentum, iron_condor)"
+        ),
     )
-    parser.add_argument("--walk-forward", action="store_true", help="Run walk-forward windows instead of single run")
-    parser.add_argument("--sensitivity", action="store_true", help="Run parameter sensitivity variants (default: from settings)")
+    parser.add_argument(
+        "--walk-forward", action="store_true", help="Run walk-forward windows instead of single run"
+    )
+    parser.add_argument(
+        "--sensitivity",
+        action="store_true",
+        help="Run parameter sensitivity variants (default: from settings)",
+    )
     parser.add_argument("--settings", default="config/settings.yaml", help="Settings file path")
     parser.add_argument("--output-dir", default="data/reports", help="Report output directory")
     parser.add_argument(
@@ -124,7 +139,12 @@ def build_strategy(
     config_overrides = config_overrides or {}
     if strategy_id == "regime_probe":
         base_cfg = settings.get("strategies", {}).get("momentum", {})
-        probe_cfg = {**base_cfg, "instrument": symbol, "lots": base_cfg.get("max_lots", 1), **config_overrides}
+        probe_cfg = {
+            **base_cfg,
+            "instrument": symbol,
+            "lots": base_cfg.get("max_lots", 1),
+            **config_overrides,
+        }
         strategy = RegimeProbeStrategy(name=strategy_id, config=probe_cfg)
         capital = float(probe_cfg.get("capital_per_trade", 200000) or 200000)
         return strategy, capital, probe_cfg
@@ -140,7 +160,9 @@ def build_strategy(
         strategy = IronCondorStrategy(name=strategy_id, config=ic_cfg)
         capital = float(ic_cfg.get("capital_per_trade", 100000) or 100000)
         return strategy, capital, ic_cfg
-    raise ValueError(f"Unsupported strategy '{strategy_id}'. Available: regime_probe, momentum, iron_condor")
+    raise ValueError(
+        f"Unsupported strategy '{strategy_id}'. Available: regime_probe, momentum, iron_condor"
+    )
 
 
 def _load_symbol_data(
@@ -151,10 +173,14 @@ def _load_symbol_data(
     start: datetime,
     end: datetime,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    candles = store.read_time_series("candles", symbol=symbol, timeframe=timeframe, start=start, end=end)
+    candles = store.read_time_series(
+        "candles", symbol=symbol, timeframe=timeframe, start=start, end=end
+    )
     if not candles.empty:
         candles["timestamp"] = pd.to_datetime(candles["timestamp"], errors="coerce")
-        candles = candles.dropna(subset=["timestamp"]).sort_values("timestamp").reset_index(drop=True)
+        candles = (
+            candles.dropna(subset=["timestamp"]).sort_values("timestamp").reset_index(drop=True)
+        )
 
     option_chain = store.read_time_series(
         "option_chain",
@@ -179,7 +205,9 @@ def _build_engine(
 ) -> BacktestEngine:
     risk_cfg = settings.get("risk", {})
     return BacktestEngine(
-        classifier=RegimeClassifier(thresholds=RegimeThresholds.from_config(settings.get("regime", {}))),
+        classifier=RegimeClassifier(
+            thresholds=RegimeThresholds.from_config(settings.get("regime", {}))
+        ),
         strategy=strategy,
         simulator=simulator,
         initial_capital=initial_capital,
@@ -273,7 +301,9 @@ def _run_walk_forward_backtest(
     fold_rows: list[dict] = []
     fold_regime_rows: list[pd.DataFrame] = []
     for i, window in enumerate(windows, start=1):
-        strategy_fold, capital_fold, _ = build_strategy(strategy_id, settings=settings, symbol=symbol)
+        strategy_fold, capital_fold, _ = build_strategy(
+            strategy_id, settings=settings, symbol=symbol
+        )
         engine = _build_engine(
             settings=settings,
             simulator=simulator,
@@ -481,7 +511,9 @@ def main() -> int:
     end = args.end or parse_date(backtest_cfg.get("end_date", "2025-12-31"))
     load_start = start - timedelta(days=max(int(args.indicator_warmup_days), 0))
 
-    vix = store.read_time_series("vix", symbol="INDIAVIX", timeframe="1d", start=load_start, end=end)
+    vix = store.read_time_series(
+        "vix", symbol="INDIAVIX", timeframe="1d", start=load_start, end=end
+    )
     fii = store.read_time_series(
         "fii_dii",
         symbol="NSE",
@@ -495,7 +527,9 @@ def main() -> int:
         slippage_pct=float(backtest_cfg.get("slippage_pct", 0.05) or 0.05),
         commission_per_order=float(backtest_cfg.get("commission_per_order", 20.0) or 20.0),
         stt_pct=float(backtest_cfg.get("stt_pct", 0.0125) or 0.0125),
-        exchange_txn_charges_pct=float(backtest_cfg.get("exchange_txn_charges_pct", 0.053) or 0.053),
+        exchange_txn_charges_pct=float(
+            backtest_cfg.get("exchange_txn_charges_pct", 0.053) or 0.053
+        ),
         gst_pct=float(backtest_cfg.get("gst_pct", 18.0) or 18.0),
         sebi_fee_pct=float(backtest_cfg.get("sebi_fee_pct", 0.0001) or 0.0001),
         stamp_duty_pct=float(backtest_cfg.get("stamp_duty_pct", 0.003) or 0.003),
@@ -516,7 +550,9 @@ def main() -> int:
 
     sensitivity_cfg = backtest_cfg.get("sensitivity", {})
     sensitivity_enabled = bool(args.sensitivity or sensitivity_cfg.get("enabled", False))
-    sensitivity_multipliers = [float(v) for v in sensitivity_cfg.get("multipliers", [0.8, 1.0, 1.2])]
+    sensitivity_multipliers = [
+        float(v) for v in sensitivity_cfg.get("multipliers", [0.8, 1.0, 1.2])
+    ]
 
     print("=" * 72)
     print("Backtest Run")
@@ -544,9 +580,14 @@ def main() -> int:
             continue
 
         for strategy_id in strategy_ids:
-            strategy, initial_capital, strategy_cfg = build_strategy(strategy_id, settings=settings, symbol=symbol)
+            strategy, initial_capital, strategy_cfg = build_strategy(
+                strategy_id, settings=settings, symbol=symbol
+            )
             run_suffix = "walkforward" if args.walk_forward else "backtest"
-            run_name = f"{strategy_id}_{symbol.lower()}_{args.timeframe}_{start.date()}_{end.date()}_{run_suffix}"
+            run_name = (
+                f"{strategy_id}_{symbol.lower()}_{args.timeframe}_"
+                f"{start.date()}_{end.date()}_{run_suffix}"
+            )
 
             metrics, paths = _run_strategy(
                 walk_forward=args.walk_forward,
@@ -575,13 +616,26 @@ def main() -> int:
             )
             runs_completed += 1
 
-            total_return = _normalized_metric(metrics, walk_forward=args.walk_forward, metric="total_return_pct")
-            sharpe = _normalized_metric(metrics, walk_forward=args.walk_forward, metric="sharpe_ratio")
-            max_dd = _normalized_metric(metrics, walk_forward=args.walk_forward, metric="max_drawdown_pct")
-            anti_overfit = _normalized_metric(metrics, walk_forward=args.walk_forward, metric="anti_overfit_pass")
+            total_return = _normalized_metric(
+                metrics, walk_forward=args.walk_forward, metric="total_return_pct"
+            )
+            sharpe = _normalized_metric(
+                metrics, walk_forward=args.walk_forward, metric="sharpe_ratio"
+            )
+            max_dd = _normalized_metric(
+                metrics, walk_forward=args.walk_forward, metric="max_drawdown_pct"
+            )
+            anti_overfit = _normalized_metric(
+                metrics, walk_forward=args.walk_forward, metric="anti_overfit_pass"
+            )
 
             print(f"\n[{strategy_id}] symbol={symbol}")
-            print(f"  total_return_pct={total_return:.2f} sharpe={sharpe:.3f} max_drawdown_pct={max_dd:.2f}")
+            print(
+                "  "
+                f"total_return_pct={total_return:.2f} "
+                f"sharpe={sharpe:.3f} "
+                f"max_drawdown_pct={max_dd:.2f}"
+            )
             for key, path in paths.items():
                 print(f"  {key}: {path}")
 
@@ -678,7 +732,8 @@ def main() -> int:
 
             variant_df = pd.DataFrame(variant_rows)
             sensitivity_base_name = (
-                f"{strategy_id}_{symbol.lower()}_{args.timeframe}_{start.date()}_{end.date()}_sensitivity"
+                f"{strategy_id}_{symbol.lower()}_{args.timeframe}_"
+                f"{start.date()}_{end.date()}_sensitivity"
             )
             sensitivity_csv = Path(output_dir) / f"{sensitivity_base_name}.csv"
             variant_df.to_csv(sensitivity_csv, index=False)
@@ -707,7 +762,9 @@ def main() -> int:
         return 1
 
     if len(symbols) > 1 and cross_rows:
-        cross_detail = pd.DataFrame(cross_rows).sort_values(["strategy", "symbol"]).reset_index(drop=True)
+        cross_detail = (
+            pd.DataFrame(cross_rows).sort_values(["strategy", "symbol"]).reset_index(drop=True)
+        )
         cross_summary = aggregate_cross_instrument_results(cross_rows)
         stamp = f"{args.timeframe}_{start.date()}_{end.date()}"
 
@@ -717,7 +774,9 @@ def main() -> int:
 
         cross_detail.to_csv(detail_csv, index=False)
         cross_summary.to_csv(summary_csv, index=False)
-        summary_json.write_text(json.dumps(cross_summary.to_dict(orient="records"), indent=2, sort_keys=True))
+        summary_json.write_text(
+            json.dumps(cross_summary.to_dict(orient="records"), indent=2, sort_keys=True)
+        )
 
         print("\nCross-instrument validation")
         print(f"  detail_csv: {detail_csv}")
@@ -725,8 +784,15 @@ def main() -> int:
         print(f"  summary_json: {summary_json}")
 
     if sensitivity_overview_rows:
-        overview_df = pd.DataFrame(sensitivity_overview_rows).sort_values(["strategy", "symbol"]).reset_index(drop=True)
-        overview_path = Path(output_dir) / f"sensitivity_overview_{args.timeframe}_{start.date()}_{end.date()}.csv"
+        overview_df = (
+            pd.DataFrame(sensitivity_overview_rows)
+            .sort_values(["strategy", "symbol"])
+            .reset_index(drop=True)
+        )
+        overview_path = (
+            Path(output_dir)
+            / f"sensitivity_overview_{args.timeframe}_{start.date()}_{end.date()}.csv"
+        )
         overview_df.to_csv(overview_path, index=False)
         print("\nSensitivity overview")
         print(f"  overview_csv: {overview_path}")

@@ -12,12 +12,12 @@ Design philosophy:
 - Thresholds are configurable via settings.yaml
 """
 
-import structlog
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
 import pandas as pd
+import structlog
 
 from src.strategies.base import RegimeState
 
@@ -27,20 +27,21 @@ logger = structlog.get_logger()
 @dataclass
 class RegimeSignals:
     """Container for all regime-relevant signals at a point in time."""
+
     timestamp: datetime
 
     # Volatility
     india_vix: float = 0.0
-    vix_change_5d: float = 0.0   # VIX change over last 5 days (rate of change matters)
+    vix_change_5d: float = 0.0  # VIX change over last 5 days (rate of change matters)
     iv_surface_parallel_shift: float = 0.0
     iv_surface_tilt_change: float = 0.0
 
     # Trend strength
-    adx_14: float = 0.0          # ADX(14) on Nifty daily
+    adx_14: float = 0.0  # ADX(14) on Nifty daily
 
     # Sentiment
-    pcr: float = 0.0             # Nifty Put-Call Ratio
-    fii_net_3d: float = 0.0      # FII net flow, 3-day cumulative (crore INR)
+    pcr: float = 0.0  # Nifty Put-Call Ratio
+    fii_net_3d: float = 0.0  # FII net flow, 3-day cumulative (crore INR)
 
     # Price context
     nifty_above_50dma: bool = True
@@ -51,6 +52,7 @@ class RegimeSignals:
 @dataclass
 class RegimeThresholds:
     """Configurable thresholds for regime classification."""
+
     vix_low: float = 14.0
     vix_high: float = 18.0
     adx_trending: float = 25.0
@@ -158,42 +160,51 @@ class RegimeClassifier:
             if trending:
                 new_regime = (
                     RegimeState.LOW_VOL_TRENDING
-                    if self.current_regime in (RegimeState.LOW_VOL_TRENDING, RegimeState.LOW_VOL_RANGING)
+                    if self.current_regime
+                    in (RegimeState.LOW_VOL_TRENDING, RegimeState.LOW_VOL_RANGING)
                     else RegimeState.HIGH_VOL_TRENDING
                 )
             else:
                 new_regime = (
                     RegimeState.LOW_VOL_RANGING
-                    if self.current_regime in (RegimeState.LOW_VOL_TRENDING, RegimeState.LOW_VOL_RANGING)
+                    if self.current_regime
+                    in (RegimeState.LOW_VOL_TRENDING, RegimeState.LOW_VOL_RANGING)
                     else RegimeState.HIGH_VOL_CHOPPY
                 )
 
         # Override: extreme FII selling can force high-vol classification
-        if signals.fii_net_3d <= self.thresholds.fii_selling_alert:
-            if new_regime in (RegimeState.LOW_VOL_TRENDING, RegimeState.LOW_VOL_RANGING):
-                logger.warning(
-                    "FII selling overriding low-vol classification",
-                    fii_net_3d=signals.fii_net_3d,
-                    original_regime=new_regime.value,
-                )
-                new_regime = RegimeState.HIGH_VOL_CHOPPY
+        if signals.fii_net_3d <= self.thresholds.fii_selling_alert and new_regime in (
+            RegimeState.LOW_VOL_TRENDING,
+            RegimeState.LOW_VOL_RANGING,
+        ):
+            logger.warning(
+                "FII selling overriding low-vol classification",
+                fii_net_3d=signals.fii_net_3d,
+                original_regime=new_regime.value,
+            )
+            new_regime = RegimeState.HIGH_VOL_CHOPPY
 
         # Override: fast VIX expansion often precedes unstable/choppy tape.
-        if signals.vix_change_5d >= self.thresholds.vix_spike_5d_alert:
-            if new_regime in (RegimeState.LOW_VOL_TRENDING, RegimeState.LOW_VOL_RANGING):
-                logger.warning(
-                    "VIX 5-day spike overriding low-vol classification",
-                    vix_change_5d=signals.vix_change_5d,
-                    original_regime=new_regime.value,
-                )
-                new_regime = RegimeState.HIGH_VOL_CHOPPY
+        if signals.vix_change_5d >= self.thresholds.vix_spike_5d_alert and new_regime in (
+            RegimeState.LOW_VOL_TRENDING,
+            RegimeState.LOW_VOL_RANGING,
+        ):
+            logger.warning(
+                "VIX 5-day spike overriding low-vol classification",
+                vix_change_5d=signals.vix_change_5d,
+                original_regime=new_regime.value,
+            )
+            new_regime = RegimeState.HIGH_VOL_CHOPPY
 
         # Override: abrupt IV surface shifts/tilts indicate options stress regime.
         iv_surface_stress = (
             abs(signals.iv_surface_parallel_shift) >= self.thresholds.iv_surface_shift_alert
             or abs(signals.iv_surface_tilt_change) >= self.thresholds.iv_surface_tilt_alert
         )
-        if iv_surface_stress and new_regime in (RegimeState.LOW_VOL_TRENDING, RegimeState.LOW_VOL_RANGING):
+        if iv_surface_stress and new_regime in (
+            RegimeState.LOW_VOL_TRENDING,
+            RegimeState.LOW_VOL_RANGING,
+        ):
             logger.warning(
                 "IV surface stress overriding low-vol classification",
                 iv_surface_parallel_shift=signals.iv_surface_parallel_shift,
@@ -229,7 +240,9 @@ class RegimeClassifier:
             "india_vix": signals.india_vix,
             "vix_change_5d": signals.vix_change_5d,
             "adx_14": signals.adx_14,
-            "adx_14_smoothed": self._smoothed_adx if self._smoothed_adx is not None else signals.adx_14,
+            "adx_14_smoothed": self._smoothed_adx
+            if self._smoothed_adx is not None
+            else signals.adx_14,
             "pcr": signals.pcr,
             "fii_net_3d": signals.fii_net_3d,
             "nifty_above_50dma": signals.nifty_above_50dma,
@@ -247,7 +260,9 @@ class RegimeClassifier:
             "to": new_regime.value,
             "vix": signals.india_vix,
             "adx": signals.adx_14,
-            "adx_smoothed": self._smoothed_adx if self._smoothed_adx is not None else signals.adx_14,
+            "adx_smoothed": self._smoothed_adx
+            if self._smoothed_adx is not None
+            else signals.adx_14,
             "pcr": signals.pcr,
             "fii_net_3d": signals.fii_net_3d,
             "vix_change_5d": signals.vix_change_5d,
@@ -301,8 +316,14 @@ class RegimeClassifier:
         vix = float(india_vix)
         b = self.thresholds.vix_hysteresis_buffer
 
-        low_family = self.current_regime in (RegimeState.LOW_VOL_TRENDING, RegimeState.LOW_VOL_RANGING)
-        high_family = self.current_regime in (RegimeState.HIGH_VOL_TRENDING, RegimeState.HIGH_VOL_CHOPPY)
+        low_family = self.current_regime in (
+            RegimeState.LOW_VOL_TRENDING,
+            RegimeState.LOW_VOL_RANGING,
+        )
+        high_family = self.current_regime in (
+            RegimeState.HIGH_VOL_TRENDING,
+            RegimeState.HIGH_VOL_CHOPPY,
+        )
 
         if low_family:
             low_vol = vix < (self.thresholds.vix_low + b)
@@ -319,7 +340,10 @@ class RegimeClassifier:
     def _resolve_trend_state(self, adx_value: float) -> bool:
         adx = float(adx_value)
         b = self.thresholds.adx_hysteresis_buffer
-        prev_trending = self.current_regime in (RegimeState.LOW_VOL_TRENDING, RegimeState.HIGH_VOL_TRENDING)
+        prev_trending = self.current_regime in (
+            RegimeState.LOW_VOL_TRENDING,
+            RegimeState.HIGH_VOL_TRENDING,
+        )
         enter_threshold = self.thresholds.adx_trending + b
         exit_threshold = max(self.thresholds.adx_ranging - b, 0.0)
         stay_threshold = max(self.thresholds.adx_trending - b, 0.0)

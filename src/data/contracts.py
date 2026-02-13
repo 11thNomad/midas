@@ -96,20 +96,24 @@ def frame_from_candle_dtos(dtos: list[NormalizedCandleDTO]) -> pd.DataFrame:
     if not dtos:
         return pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume", "oi"])
 
-    return pd.DataFrame(
-        [
-            {
-                "timestamp": dto.timestamp,
-                "open": dto.open,
-                "high": dto.high,
-                "low": dto.low,
-                "close": dto.close,
-                "volume": dto.volume,
-                "oi": dto.oi,
-            }
-            for dto in dtos
-        ]
-    ).sort_values("timestamp").reset_index(drop=True)
+    return (
+        pd.DataFrame(
+            [
+                {
+                    "timestamp": dto.timestamp,
+                    "open": dto.open,
+                    "high": dto.high,
+                    "low": dto.low,
+                    "close": dto.close,
+                    "volume": dto.volume,
+                    "oi": dto.oi,
+                }
+                for dto in dtos
+            ]
+        )
+        .sort_values("timestamp")
+        .reset_index(drop=True)
+    )
 
 
 def option_dtos_from_chain(
@@ -169,19 +173,25 @@ def fii_dtos_from_frame(df: pd.DataFrame, *, source: str) -> list[NormalizedFiiD
 
 def frame_from_fii_dtos(dtos: list[NormalizedFiiDiiDTO]) -> pd.DataFrame:
     if not dtos:
-        return pd.DataFrame(columns=["date", "fii_buy", "fii_sell", "fii_net", "dii_buy", "dii_sell", "dii_net"])
+        return pd.DataFrame(
+            columns=["date", "fii_buy", "fii_sell", "fii_net", "dii_buy", "dii_sell", "dii_net"]
+        )
 
-    return pd.DataFrame(
-        [
-            {
-                "date": dto.date,
-                "fii_buy": dto.fii_buy,
-                "fii_sell": dto.fii_sell,
-                "fii_net": dto.fii_net,
-                "dii_buy": dto.dii_buy,
-                "dii_sell": dto.dii_sell,
-                "dii_net": dto.dii_net,
-            }
-            for dto in dtos
-        ]
-    ).sort_values("date").reset_index(drop=True)
+    return (
+        pd.DataFrame(
+            [
+                {
+                    "date": dto.date,
+                    "fii_buy": dto.fii_buy,
+                    "fii_sell": dto.fii_sell,
+                    "fii_net": dto.fii_net,
+                    "dii_buy": dto.dii_buy,
+                    "dii_sell": dto.dii_sell,
+                    "dii_net": dto.dii_net,
+                }
+                for dto in dtos
+            ]
+        )
+        .sort_values("date")
+        .reset_index(drop=True)
+    )

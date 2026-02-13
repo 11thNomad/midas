@@ -26,7 +26,9 @@ def parse_date(value: str) -> datetime:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Summarize regime snapshots and strategy transitions.")
+    parser = argparse.ArgumentParser(
+        description="Summarize regime snapshots and strategy transitions."
+    )
     parser.add_argument("--symbol", default="NIFTY", help="Symbol partition to read")
     parser.add_argument("--start", type=parse_date, help="Start date (YYYY-MM-DD)")
     parser.add_argument("--end", type=parse_date, help="End date (YYYY-MM-DD)")
@@ -50,7 +52,9 @@ def main() -> int:
     transition_store = StrategyTransitionStore(base_dir=str(cache_dir))
 
     snapshots = snapshot_store.read_snapshots(symbol=args.symbol, start=args.start, end=args.end)
-    transitions = transition_store.read_transitions(symbol=args.symbol, start=args.start, end=args.end)
+    transitions = transition_store.read_transitions(
+        symbol=args.symbol, start=args.start, end=args.end
+    )
 
     regime_daily = summarize_regime_daily(snapshots)
     transition_daily = summarize_transitions_daily(transitions)
@@ -60,7 +64,9 @@ def main() -> int:
     print("Regime / Transition Report")
     print("=" * 72)
     print(f"symbol={args.symbol}")
-    print(f"window={args.start.date() if args.start else 'begin'} -> {args.end.date() if args.end else 'latest'}")
+    window_start = args.start.date() if args.start else "begin"
+    window_end = args.end.date() if args.end else "latest"
+    print(f"window={window_start} -> {window_end}")
     print(f"cache_dir={cache_dir}")
     print(f"snapshot_rows={len(snapshots)} transition_rows={len(transitions)}")
 

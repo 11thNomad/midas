@@ -28,14 +28,18 @@ class PaperExecutionEngine:
     _cash: float = field(default=0.0, init=False, repr=False)
     _positions: dict[str, int] = field(default_factory=dict, init=False, repr=False)
     _avg_cost_by_instrument: dict[str, float] = field(default_factory=dict, init=False, repr=False)
-    _last_price_by_instrument: dict[str, float] = field(default_factory=dict, init=False, repr=False)
+    _last_price_by_instrument: dict[str, float] = field(
+        default_factory=dict, init=False, repr=False
+    )
     _realized_pnl_today: float = field(default=0.0, init=False, repr=False)
 
     def __post_init__(self):
         self._store = DataStore(base_dir=self.base_dir)
         self._cash = float(self.initial_capital)
 
-    def execute_signals(self, signals: list[Signal], *, market_data: dict[str, Any] | None = None) -> list[dict]:
+    def execute_signals(
+        self, signals: list[Signal], *, market_data: dict[str, Any] | None = None
+    ) -> list[dict]:
         """Execute actionable signals as immediate paper fills and persist events."""
         market_data = market_data or {}
         fills: list[dict] = []
@@ -58,7 +62,9 @@ class PaperExecutionEngine:
             )
 
         if self.circuit_breaker is not None:
-            default_price = float(market_data.get("last_price", market_data.get("close_price", 0.0)) or 0.0)
+            default_price = float(
+                market_data.get("last_price", market_data.get("close_price", 0.0)) or 0.0
+            )
             equity = self._mark_to_market(default_price=default_price)
             unrealized_pnl = self._compute_unrealized_pnl(default_price=default_price)
             open_positions = sum(1 for _, qty in self._positions.items() if qty != 0)
@@ -95,7 +101,9 @@ class PaperExecutionEngine:
             self._fill_seq += 1
             instrument = str(order.get("symbol", signal.instrument))
             raw_price = self._resolve_order_price(order=order, market_data=market_data)
-            action = str(order.get("action", self._default_action(signal, symbol=instrument))).upper()
+            action = str(
+                order.get("action", self._default_action(signal, symbol=instrument))
+            ).upper()
             filled_price = self._apply_slippage(raw_price, action=action)
             quantity = int(order.get("quantity", 1) or 1)
 
@@ -126,11 +134,12 @@ class PaperExecutionEngine:
             )
             self._realized_pnl_today += realized_delta - fees
             if action == "BUY":
-                self._cash -= (notional + fees)
+                self._cash -= notional + fees
             else:
-                self._cash += (notional - fees)
+                self._cash += notional - fees
             self._last_price_by_instrument[instrument] = float(filled_price)
-            # TODO: Wire strategy state updates (on_fill) once runtime tracks strategy instances per signal.
+            # TODO: Wire strategy state updates (on_fill)
+            # once runtime tracks strategy instances per signal.
         return out
 
     def _default_order(self, signal: Signal) -> dict[str, Any]:
@@ -211,7 +220,11 @@ class PaperExecutionEngine:
         current_qty = int(self._positions.get(instrument, 0))
         current_avg = float(self._avg_cost_by_instrument.get(instrument, 0.0))
 
-        if current_qty == 0 or (current_qty > 0 and qty_change > 0) or (current_qty < 0 and qty_change < 0):
+        if (
+            current_qty == 0
+            or (current_qty > 0 and qty_change > 0)
+            or (current_qty < 0 and qty_change < 0)
+        ):
             new_qty = current_qty + qty_change
             if new_qty == 0:
                 self._positions[instrument] = 0
@@ -219,7 +232,9 @@ class PaperExecutionEngine:
                 return 0.0
             total_qty = abs(current_qty) + abs(qty_change)
             if total_qty > 0:
-                new_avg = ((abs(current_qty) * current_avg) + (abs(qty_change) * fill_price)) / total_qty
+                new_avg = (
+                    (abs(current_qty) * current_avg) + (abs(qty_change) * fill_price)
+                ) / total_qty
                 self._positions[instrument] = new_qty
                 self._avg_cost_by_instrument[instrument] = float(new_avg)
             return 0.0

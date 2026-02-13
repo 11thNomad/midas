@@ -67,7 +67,9 @@ def total_call_put_oi(chain_df: pd.DataFrame) -> pd.Series:
     return pd.Series({"call_oi": float(call_oi), "put_oi": float(put_oi)})
 
 
-def iv_surface_change(previous_chain_df: pd.DataFrame, current_chain_df: pd.DataFrame) -> pd.DataFrame:
+def iv_surface_change(
+    previous_chain_df: pd.DataFrame, current_chain_df: pd.DataFrame
+) -> pd.DataFrame:
     """Return strike/type aligned IV change table between two snapshots."""
     prev = _normalize_iv_chain(previous_chain_df).rename(columns={"iv": "iv_prev"})
     curr = _normalize_iv_chain(current_chain_df).rename(columns={"iv": "iv_curr"})
@@ -81,7 +83,9 @@ def iv_surface_change(previous_chain_df: pd.DataFrame, current_chain_df: pd.Data
     return merged.sort_values(["strike", "option_type"]).reset_index(drop=True)
 
 
-def iv_surface_parallel_shift(previous_chain_df: pd.DataFrame, current_chain_df: pd.DataFrame) -> float:
+def iv_surface_parallel_shift(
+    previous_chain_df: pd.DataFrame, current_chain_df: pd.DataFrame
+) -> float:
     """Average IV move across overlapping strikes/contracts."""
     delta = iv_surface_change(previous_chain_df, current_chain_df)
     if delta.empty:
@@ -98,8 +102,12 @@ def iv_surface_tilt(chain_df: pd.DataFrame, underlying_price: float | None = Non
     if underlying_price is None:
         underlying_price = float(normalized["strike"].median())
 
-    puts = normalized[(normalized["option_type"] == "PE") & (normalized["strike"] < underlying_price)]["iv"]
-    calls = normalized[(normalized["option_type"] == "CE") & (normalized["strike"] > underlying_price)]["iv"]
+    puts = normalized[
+        (normalized["option_type"] == "PE") & (normalized["strike"] < underlying_price)
+    ]["iv"]
+    calls = normalized[
+        (normalized["option_type"] == "CE") & (normalized["strike"] > underlying_price)
+    ]["iv"]
     if puts.empty or calls.empty:
         return 0.0
     return float(puts.mean() - calls.mean())

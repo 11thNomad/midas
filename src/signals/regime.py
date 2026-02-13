@@ -42,8 +42,16 @@ def build_regime_signals(
         dma50 = trend.sma(close, period=50)
         dma200 = trend.sma(close, period=200)
         latest_close = float(close.iloc[-1])
-        above_50dma = bool(latest_close > float(dma50.dropna().iloc[-1])) if not dma50.dropna().empty else True
-        above_200dma = bool(latest_close > float(dma200.dropna().iloc[-1])) if not dma200.dropna().empty else True
+        above_50dma = (
+            bool(latest_close > float(dma50.dropna().iloc[-1]))
+            if not dma50.dropna().empty
+            else True
+        )
+        above_200dma = (
+            bool(latest_close > float(dma200.dropna().iloc[-1]))
+            if not dma200.dropna().empty
+            else True
+        )
 
     pcr = options_signals.put_call_ratio(chain_df) if chain_df is not None else 0.0
     vix_change_5d = 0.0
@@ -55,7 +63,9 @@ def build_regime_signals(
     iv_surface_parallel_shift = 0.0
     iv_surface_tilt_change = 0.0
     if chain_df is not None and previous_chain_df is not None:
-        iv_surface_parallel_shift = options_signals.iv_surface_parallel_shift(previous_chain_df, chain_df)
+        iv_surface_parallel_shift = options_signals.iv_surface_parallel_shift(
+            previous_chain_df, chain_df
+        )
         iv_surface_tilt_change = options_signals.iv_surface_tilt_change(previous_chain_df, chain_df)
 
     return RegimeSignals(

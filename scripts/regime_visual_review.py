@@ -1,7 +1,8 @@
 """Generate replay-based visual review artifacts for manual regime validation.
 
 Examples:
-  python scripts/regime_visual_review.py --symbol NIFTY --timeframe 1d --start 2025-01-01 --end 2025-12-31
+  python scripts/regime_visual_review.py --symbol NIFTY --timeframe 1d \
+    --start 2025-01-01 --end 2025-12-31
   python scripts/regime_visual_review.py --symbol NIFTY --timeframe 5m --days 60
 """
 
@@ -38,7 +39,9 @@ def parse_date(value: str) -> datetime:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Generate visual replay artifacts for regime review.")
+    parser = argparse.ArgumentParser(
+        description="Generate visual replay artifacts for regime review."
+    )
     parser.add_argument("--symbol", default="NIFTY", help="Symbol partition")
     parser.add_argument("--timeframe", default="1d", help="Candle timeframe partition")
     parser.add_argument("--start", type=parse_date, help="Start date YYYY-MM-DD")
@@ -51,7 +54,9 @@ def parse_args() -> argparse.Namespace:
         help="Extra days loaded before analysis start for indicator warmup (excluded from output).",
     )
     parser.add_argument("--settings", default="config/settings.yaml", help="Settings YAML path")
-    parser.add_argument("--output-dir", default="data/reports", help="Directory for output artifacts")
+    parser.add_argument(
+        "--output-dir", default="data/reports", help="Directory for output artifacts"
+    )
     parser.add_argument("--run-name", default="regime_review", help="Prefix for output filenames")
     parser.add_argument(
         "--no-timestamp-subdir",
@@ -68,7 +73,9 @@ def load_settings(path: str) -> dict:
     return yaml.safe_load(settings_path.read_text())
 
 
-def resolve_windows(args: argparse.Namespace) -> tuple[datetime | None, datetime | None, datetime | None]:
+def resolve_windows(
+    args: argparse.Namespace,
+) -> tuple[datetime | None, datetime | None, datetime | None]:
     analysis_start: datetime | None
     end: datetime | None
     if args.days and args.days > 0:
@@ -88,7 +95,9 @@ def build_visual_review_frame(*, candles: pd.DataFrame, snapshots: pd.DataFrame)
     """Merge candles with replay snapshots for manual visual review."""
     candles_frame = candles.copy()
     candles_frame["timestamp"] = pd.to_datetime(candles_frame["timestamp"], errors="coerce")
-    candles_frame = candles_frame.dropna(subset=["timestamp"]).sort_values("timestamp").reset_index(drop=True)
+    candles_frame = (
+        candles_frame.dropna(subset=["timestamp"]).sort_values("timestamp").reset_index(drop=True)
+    )
     candles_frame["close"] = pd.to_numeric(candles_frame.get("close"), errors="coerce")
 
     if snapshots.empty:
@@ -110,7 +119,9 @@ def build_visual_review_frame(*, candles: pd.DataFrame, snapshots: pd.DataFrame)
         "iv_surface_tilt_change",
     ]
     keep_cols = [col for col in keep_cols if col in snap.columns]
-    snap = snap[keep_cols].dropna(subset=["timestamp"]).sort_values("timestamp").reset_index(drop=True)
+    snap = (
+        snap[keep_cols].dropna(subset=["timestamp"]).sort_values("timestamp").reset_index(drop=True)
+    )
 
     out = candles_frame.merge(snap, on="timestamp", how="left")
     out["regime"] = out.get("regime", "unknown").fillna("unknown").astype(str)
@@ -121,17 +132,21 @@ def _plot_regime_review(frame: pd.DataFrame, *, symbol: str, timeframe: str, out
     fig, axes = plt.subplots(2, 1, figsize=(14, 8), sharex=True)
     ax_price, ax_signal = axes
 
-    ax_price.plot(frame["timestamp"], frame["close"], color="#222222", linewidth=1.4, label=f"{symbol} close")
+    ax_price.plot(
+        frame["timestamp"], frame["close"], color="#222222", linewidth=1.4, label=f"{symbol} close"
+    )
     for regime, part in frame.groupby("regime"):
         color = REGIME_COLOR_MAP.get(regime, REGIME_COLOR_MAP["unknown"])
-        ax_price.scatter(part["timestamp"], part["close"], s=10, color=color, alpha=0.75, label=regime)
+        ax_price.scatter(
+            part["timestamp"], part["close"], s=10, color=color, alpha=0.75, label=regime
+        )
     ax_price.set_title(f"{symbol} {timeframe} replay regimes")
     ax_price.set_ylabel("Close")
     ax_price.grid(alpha=0.2)
     handles, labels = ax_price.get_legend_handles_labels()
     dedup_labels: list[str] = []
     dedup_handles = []
-    for handle, label in zip(handles, labels):
+    for handle, label in zip(handles, labels, strict=False):
         if label in dedup_labels:
             continue
         dedup_labels.append(label)
@@ -139,9 +154,13 @@ def _plot_regime_review(frame: pd.DataFrame, *, symbol: str, timeframe: str, out
     ax_price.legend(dedup_handles, dedup_labels, loc="upper left", ncol=3, fontsize=8)
 
     if "india_vix" in frame.columns:
-        ax_signal.plot(frame["timestamp"], frame["india_vix"], color="#1d3557", linewidth=1.2, label="VIX")
+        ax_signal.plot(
+            frame["timestamp"], frame["india_vix"], color="#1d3557", linewidth=1.2, label="VIX"
+        )
     if "adx_14" in frame.columns:
-        ax_signal.plot(frame["timestamp"], frame["adx_14"], color="#e63946", linewidth=1.0, label="ADX14")
+        ax_signal.plot(
+            frame["timestamp"], frame["adx_14"], color="#e63946", linewidth=1.0, label="ADX14"
+        )
     ax_signal.set_ylabel("Signal")
     ax_signal.grid(alpha=0.2)
     ax_signal.legend(loc="upper left", fontsize=8)
@@ -151,12 +170,19 @@ def _plot_regime_review(frame: pd.DataFrame, *, symbol: str, timeframe: str, out
     plt.close(fig)
 
 
-def _render_html(*, review: pd.DataFrame, transitions: pd.DataFrame, chart_path: Path, out_path: Path):
+def _render_html(
+    *, review: pd.DataFrame, transitions: pd.DataFrame, chart_path: Path, out_path: Path
+):
     regime_counts = review["regime"].value_counts().to_dict() if "regime" in review.columns else {}
     counts_rows = "".join(
-        f"<tr><td>{regime}</td><td>{int(count)}</td></tr>" for regime, count in sorted(regime_counts.items())
+        f"<tr><td>{regime}</td><td>{int(count)}</td></tr>"
+        for regime, count in sorted(regime_counts.items())
     )
-    transition_table = transitions.to_html(index=False, border=1) if not transitions.empty else "<p>No transitions.</p>"
+    transition_table = (
+        transitions.to_html(index=False, border=1)
+        if not transitions.empty
+        else "<p>No transitions.</p>"
+    )
 
     html = (
         "<html><head><title>Regime Visual Review</title></head><body>"
@@ -221,12 +247,16 @@ def main() -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     store = DataStore(base_dir=str(cache_dir))
-    candles = store.read_time_series("candles", symbol=args.symbol, timeframe=args.timeframe, start=load_start, end=end)
+    candles = store.read_time_series(
+        "candles", symbol=args.symbol, timeframe=args.timeframe, start=load_start, end=end
+    )
     if candles.empty:
         print("No candle data available for requested window.")
         return 1
 
-    vix = store.read_time_series("vix", symbol="INDIAVIX", timeframe="1d", start=load_start, end=end)
+    vix = store.read_time_series(
+        "vix", symbol="INDIAVIX", timeframe="1d", start=load_start, end=end
+    )
     fii = store.read_time_series(
         "fii_dii",
         symbol="NSE",
@@ -236,7 +266,9 @@ def main() -> int:
         timestamp_col="date",
     )
 
-    classifier = RegimeClassifier(thresholds=RegimeThresholds.from_config(settings.get("regime", {})))
+    classifier = RegimeClassifier(
+        thresholds=RegimeThresholds.from_config(settings.get("regime", {}))
+    )
     replay = replay_regimes_no_lookahead(
         candles=candles,
         classifier=classifier,
@@ -246,8 +278,12 @@ def main() -> int:
     )
     candles_for_review = candles.copy()
     if analysis_start is not None:
-        candles_for_review["timestamp"] = pd.to_datetime(candles_for_review["timestamp"], errors="coerce")
-        candles_for_review = candles_for_review.loc[candles_for_review["timestamp"] >= pd.Timestamp(analysis_start)]
+        candles_for_review["timestamp"] = pd.to_datetime(
+            candles_for_review["timestamp"], errors="coerce"
+        )
+        candles_for_review = candles_for_review.loc[
+            candles_for_review["timestamp"] >= pd.Timestamp(analysis_start)
+        ]
     review = build_visual_review_frame(candles=candles_for_review, snapshots=replay.snapshots)
 
     prefix = f"{args.run_name}_{args.symbol}_{args.timeframe}"
@@ -261,8 +297,12 @@ def main() -> int:
     review.to_csv(review_csv, index=False)
     replay.transitions.to_csv(transitions_csv, index=False)
     _plot_regime_review(review, symbol=args.symbol, timeframe=args.timeframe, out_path=chart_png)
-    _render_html(review=review, transitions=replay.transitions, chart_path=chart_png, out_path=html_report)
-    _write_checklist(review_csv=review_csv, chart_png=chart_png, html_report=html_report, out_path=checklist_md)
+    _render_html(
+        review=review, transitions=replay.transitions, chart_path=chart_png, out_path=html_report
+    )
+    _write_checklist(
+        review_csv=review_csv, chart_png=chart_png, html_report=html_report, out_path=checklist_md
+    )
 
     meta = {
         "generated_at": datetime.now(UTC).isoformat(),
@@ -293,8 +333,11 @@ def main() -> int:
         f"symbol={args.symbol} timeframe={args.timeframe} "
         f"rows={len(review)} transitions={len(replay.transitions)}"
     )
-    print(f"load_window={load_start.date() if load_start else 'begin'} -> {end.date() if end else 'latest'}")
-    print(f"analysis_window={analysis_start.date() if analysis_start else 'begin'} -> {end.date() if end else 'latest'}")
+    load_window_start = load_start.date() if load_start else "begin"
+    analysis_window_start = analysis_start.date() if analysis_start else "begin"
+    window_end = end.date() if end else "latest"
+    print(f"load_window={load_window_start} -> {window_end}")
+    print(f"analysis_window={analysis_window_start} -> {window_end}")
     print(f"indicator_warmup_days={args.indicator_warmup_days}")
     print(f"output_dir={output_dir.relative_to(REPO_ROOT)}")
     print(f"review_csv={review_csv.relative_to(REPO_ROOT)}")

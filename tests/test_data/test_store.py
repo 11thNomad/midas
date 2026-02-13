@@ -118,9 +118,9 @@ def test_write_time_series_raises_for_missing_dedup_column(tmp_path):
 def test_count_rows_reads_parquet_metadata(tmp_path):
     store = DataStore(base_dir=str(tmp_path / "cache"))
     directory = store._dataset_dir("row_count_test")
-    pd.DataFrame({"timestamp": pd.to_datetime(["2026-01-01", "2026-01-02"]), "v": [1, 2]}).to_parquet(
-        directory / "2026.parquet", index=False
-    )
+    pd.DataFrame(
+        {"timestamp": pd.to_datetime(["2026-01-01", "2026-01-02"]), "v": [1, 2]}
+    ).to_parquet(directory / "2026.parquet", index=False)
     pd.DataFrame({"timestamp": pd.to_datetime(["2027-01-01"]), "v": [3]}).to_parquet(
         directory / "2027.parquet", index=False
     )

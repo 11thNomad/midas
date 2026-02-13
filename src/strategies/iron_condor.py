@@ -18,6 +18,8 @@ class IronCondorStrategy(BaseStrategy):
         lots = self.compute_position_size(capital=0, risk_per_trade=0)
         underlying_price = float(market_data.get("underlying_price", 0.0) or 0.0)
         chain_df = self._normalize_chain(market_data.get("option_chain"))
+        min_dte = int(self.config.get("dte_min", 5) or 5)
+        max_dte = int(self.config.get("dte_max", 14) or 14)
 
         if self.state.current_position is None:
             entry_chain, entry_dte = self._select_chain_for_entry_dte(chain_df=chain_df, now_ts=ts)
@@ -28,10 +30,7 @@ class IronCondorStrategy(BaseStrategy):
                     instrument=instrument,
                     timestamp=ts,
                     regime=regime,
-                    reason=(
-                        f"No contracts within DTE bounds "
-                        f"[{int(self.config.get('dte_min', 5) or 5)}, {int(self.config.get('dte_max', 14) or 14)}]"
-                    ),
+                    reason=(f"No contracts within DTE bounds [{min_dte}, {max_dte}]"),
                 )
 
             legs = self._build_condor_legs(
@@ -169,7 +168,9 @@ class IronCondorStrategy(BaseStrategy):
         out = out.dropna(subset=["strike"])
         return out.reset_index(drop=True)
 
-    def _select_chain_for_entry_dte(self, *, chain_df: pd.DataFrame, now_ts: datetime) -> tuple[pd.DataFrame, int | None]:
+    def _select_chain_for_entry_dte(
+        self, *, chain_df: pd.DataFrame, now_ts: datetime
+    ) -> tuple[pd.DataFrame, int | None]:
         if chain_df.empty or "expiry" not in chain_df.columns:
             return chain_df, None
 
@@ -225,8 +226,12 @@ class IronCondorStrategy(BaseStrategy):
                 {"symbol": f"{instrument}_PUT_HEDGE", "action": "BUY", "quantity": quantity},
             ]
 
-        call_short = self._pick_short_leg(calls, target_delta=call_target, is_call=True, underlying_price=underlying_price)
-        put_short = self._pick_short_leg(puts, target_delta=put_target, is_call=False, underlying_price=underlying_price)
+        call_short = self._pick_short_leg(
+            calls, target_delta=call_target, is_call=True, underlying_price=underlying_price
+        )
+        put_short = self._pick_short_leg(
+            puts, target_delta=put_target, is_call=False, underlying_price=underlying_price
+        )
 
         call_hedge_strike = float(call_short["strike"]) + wing_width
         put_hedge_strike = float(put_short["strike"]) - wing_width
@@ -287,7 +292,9 @@ class IronCondorStrategy(BaseStrategy):
         underlying_price: float,
     ) -> pd.Series:
         if "delta" in frame.columns and not frame["delta"].dropna().empty:
-            scored = frame.assign(_score=(frame["delta"] - target_delta).abs()).sort_values("_score")
+            scored = frame.assign(_score=(frame["delta"] - target_delta).abs()).sort_values(
+                "_score"
+            )
             return scored.iloc[0]
 
         if underlying_price > 0:
@@ -296,7 +303,9 @@ class IronCondorStrategy(BaseStrategy):
             else:
                 otm = frame.loc[frame["strike"] <= underlying_price].copy()
             if not otm.empty:
-                scored = otm.assign(_score=(otm["strike"] - underlying_price).abs()).sort_values("_score")
+                scored = otm.assign(_score=(otm["strike"] - underlying_price).abs()).sort_values(
+                    "_score"
+                )
                 return scored.iloc[0]
 
         return self._pick_nearest_strike(frame, target_strike=float(frame["strike"].median()))
@@ -328,7 +337,13 @@ class IronCondorStrategy(BaseStrategy):
                 break
         if price_col is None:
             return {}
-        symbol_col = "symbol" if "symbol" in chain_df.columns else "tradingsymbol" if "tradingsymbol" in chain_df.columns else None
+        symbol_col = (
+            "symbol"
+            if "symbol" in chain_df.columns
+            else "tradingsymbol"
+            if "tradingsymbol" in chain_df.columns
+            else None
+        )
         if symbol_col is None:
             return {}
         out: dict[str, float] = {}
@@ -361,7 +376,9 @@ class IronCondorStrategy(BaseStrategy):
         for leg in legs:
             action = str(leg.get("action", "")).upper()
             exit_action = "BUY" if action == "SELL" else "SELL"
-            exit_orders.append({"symbol": leg.get("symbol", ""), "action": exit_action, "quantity": quantity})
+            exit_orders.append(
+                {"symbol": leg.get("symbol", ""), "action": exit_action, "quantity": quantity}
+            )
         return exit_orders
 
     @staticmethod
@@ -369,7 +386,13 @@ class IronCondorStrategy(BaseStrategy):
         if "expiry" not in chain_df.columns:
             return None
         symbols = {str(leg.get("symbol", "")).strip() for leg in legs}
-        symbol_col = "symbol" if "symbol" in chain_df.columns else "tradingsymbol" if "tradingsymbol" in chain_df.columns else None
+        symbol_col = (
+            "symbol"
+            if "symbol" in chain_df.columns
+            else "tradingsymbol"
+            if "tradingsymbol" in chain_df.columns
+            else None
+        )
         if symbol_col is None:
             return None
         subset = chain_df.loc[chain_df[symbol_col].astype(str).isin(symbols)].copy()

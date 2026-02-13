@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-
 # NSE holidays (maintained manually; update yearly from NSE circular)
 HOLIDAYS: dict[int, list[date]] = {
     2023: [

@@ -9,6 +9,7 @@ Every strategy must implement this interface. This ensures:
 """
 
 from abc import ABC, abstractmethod
+from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -17,15 +18,17 @@ from typing import Any
 
 class SignalType(Enum):
     """Trading signal types."""
+
     NO_SIGNAL = "no_signal"
     ENTRY_LONG = "entry_long"
     ENTRY_SHORT = "entry_short"
     EXIT = "exit"
-    ADJUST = "adjust"          # Modify existing position (e.g., roll options)
+    ADJUST = "adjust"  # Modify existing position (e.g., roll options)
 
 
 class RegimeState(Enum):
     """Market regime classifications."""
+
     LOW_VOL_TRENDING = "low_vol_trending"
     LOW_VOL_RANGING = "low_vol_ranging"
     HIGH_VOL_TRENDING = "high_vol_trending"
@@ -36,6 +39,7 @@ class RegimeState(Enum):
 @dataclass
 class Signal:
     """A trading signal produced by a strategy."""
+
     signal_type: SignalType
     strategy_name: str
     instrument: str
@@ -54,10 +58,10 @@ class Signal:
 
     # Context — logged with every trade for post-analysis
     regime: RegimeState = RegimeState.UNKNOWN
-    confidence: float = 0.0           # 0.0 to 1.0
+    confidence: float = 0.0  # 0.0 to 1.0
     greeks_snapshot: dict = field(default_factory=dict)
     indicators: dict = field(default_factory=dict)  # ADX, RSI, VIX, etc.
-    reason: str = ""                  # Human-readable entry/exit reason
+    reason: str = ""  # Human-readable entry/exit reason
 
     @property
     def is_actionable(self) -> bool:
@@ -67,6 +71,7 @@ class Signal:
 @dataclass
 class StrategyState:
     """Tracks the current state of a strategy instance."""
+
     name: str
     is_active: bool = True
     current_position: dict | None = None
@@ -104,10 +109,8 @@ class BaseStrategy(ABC):
         regime_strings = self.config.get("active_regimes", [])
         regimes = []
         for r in regime_strings:
-            try:
+            with suppress(ValueError):
                 regimes.append(RegimeState(r))
-            except ValueError:
-                pass  # Log warning about unknown regime
         return regimes
 
     def should_be_active(self, current_regime: RegimeState) -> bool:
@@ -197,4 +200,8 @@ class BaseStrategy(ABC):
 
     def __repr__(self) -> str:
         status = "ACTIVE" if self.state.is_active else "INACTIVE"
-        return f"<{self.name} [{status}] trades={self.state.trade_count} pnl={self.state.realized_pnl:.0f}>"
+        return (
+            f"<{self.name} [{status}] "
+            f"trades={self.state.trade_count} "
+            f"pnl={self.state.realized_pnl:.0f}>"
+        )

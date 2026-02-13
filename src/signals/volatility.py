@@ -16,7 +16,9 @@ def atr_pct(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14)
     return (a / close.replace(0, pd.NA)) * 100.0
 
 
-def historical_volatility(close: pd.Series, window: int = 20, annualization: int = 252) -> pd.Series:
+def historical_volatility(
+    close: pd.Series, window: int = 20, annualization: int = 252
+) -> pd.Series:
     log_returns = np.log(close / close.shift(1))
     return log_returns.rolling(window=window).std(ddof=0) * np.sqrt(annualization)
 

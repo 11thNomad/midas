@@ -28,12 +28,18 @@ def parse_date(value: str) -> datetime:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Summarize paper fills into daily strategy P&L.")
-    parser.add_argument("--symbol", default="NIFTY", help="Underlying symbol partition used by paper fills")
+    parser.add_argument(
+        "--symbol", default="NIFTY", help="Underlying symbol partition used by paper fills"
+    )
     parser.add_argument("--start", type=parse_date, help="Start date (YYYY-MM-DD)")
     parser.add_argument("--end", type=parse_date, help="End date (YYYY-MM-DD)")
     parser.add_argument("--settings", default="config/settings.yaml", help="Settings YAML path")
-    parser.add_argument("--output-dir", default="data/reports", help="Directory for generated reports")
-    parser.add_argument("--print-rows", type=int, default=20, help="Rows to print in terminal summary")
+    parser.add_argument(
+        "--output-dir", default="data/reports", help="Directory for generated reports"
+    )
+    parser.add_argument(
+        "--print-rows", type=int, default=20, help="Rows to print in terminal summary"
+    )
     return parser.parse_args()
 
 
@@ -143,9 +149,11 @@ def main() -> int:
     print("=" * 72)
     print("Paper Fills Daily Summary")
     print("=" * 72)
+    window_start = args.start.date() if args.start else "begin"
+    window_end = args.end.date() if args.end else "latest"
     print(
         f"symbol={args.symbol} rows={len(fills)} daily_rows={len(daily)} "
-        f"window={args.start.date() if args.start else 'begin'} -> {args.end.date() if args.end else 'latest'}"
+        f"window={window_start} -> {window_end}"
     )
     print(
         f"totals: gross_cashflow={payload['totals']['gross_cashflow']:.2f} "

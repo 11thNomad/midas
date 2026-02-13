@@ -70,7 +70,8 @@ class TrueDataFeed(DataFeed):
             except Exception:
                 continue
         raise TrueDataFeedError(
-            "TrueData SDK client class not found. Install the official truedata_ws package and verify imports."
+            "TrueData SDK client class not found. "
+            "Install the official truedata_ws package and verify imports."
         )
 
     def _ensure_client(self):
@@ -106,7 +107,9 @@ class TrueDataFeed(DataFeed):
     @staticmethod
     def _normalize_candles(payload: Any) -> pd.DataFrame:
         if payload is None:
-            return pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume", "oi"])
+            return pd.DataFrame(
+                columns=["timestamp", "open", "high", "low", "close", "volume", "oi"]
+            )
 
         if isinstance(payload, pd.DataFrame):
             frame = payload.copy()
@@ -114,10 +117,14 @@ class TrueDataFeed(DataFeed):
             try:
                 frame = pd.DataFrame(payload)
             except Exception as exc:
-                raise TrueDataFeedError(f"Unsupported candle payload type: {type(payload)}") from exc
+                raise TrueDataFeedError(
+                    f"Unsupported candle payload type: {type(payload)}"
+                ) from exc
 
         if frame.empty:
-            return pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume", "oi"])
+            return pd.DataFrame(
+                columns=["timestamp", "open", "high", "low", "close", "volume", "oi"]
+            )
 
         rename_map = {
             "datetime": "timestamp",

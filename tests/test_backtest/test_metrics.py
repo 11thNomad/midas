@@ -27,8 +27,12 @@ def test_summarize_backtest_uses_configurable_risk_free_rate():
         }
     )
     fills = pd.DataFrame({"fees": [0.0]})
-    low_rf = summarize_backtest(equity_curve=equity, fills=fills, initial_capital=1000.0, risk_free_rate_annual=0.0)
-    high_rf = summarize_backtest(equity_curve=equity, fills=fills, initial_capital=1000.0, risk_free_rate_annual=0.20)
+    low_rf = summarize_backtest(
+        equity_curve=equity, fills=fills, initial_capital=1000.0, risk_free_rate_annual=0.0
+    )
+    high_rf = summarize_backtest(
+        equity_curve=equity, fills=fills, initial_capital=1000.0, risk_free_rate_annual=0.20
+    )
     assert low_rf["sharpe_ratio"] != high_rf["sharpe_ratio"]
 
 

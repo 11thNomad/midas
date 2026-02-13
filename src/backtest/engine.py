@@ -87,7 +87,9 @@ class BacktestEngine:
             open_price = float(row["open"])
             close_price = float(row["close"])
             candles_hist = bars.iloc[:i]
-            vix_hist = vix.loc[vix["timestamp"] < pd.Timestamp(ts)] if not vix.empty else pd.DataFrame()
+            vix_hist = (
+                vix.loc[vix["timestamp"] < pd.Timestamp(ts)] if not vix.empty else pd.DataFrame()
+            )
             fii_hist = fii.loc[fii["date"] < pd.Timestamp(ts)] if not fii.empty else pd.DataFrame()
             chain_asof = self._latest_chain_asof(chain, ts, strict=True)
             mark_prices = self._build_mark_price_map(
@@ -97,7 +99,11 @@ class BacktestEngine:
             )
 
             vix_series = vix_hist["close"].astype("float64") if not vix_hist.empty else None
-            vix_value = float(vix_series.iloc[-1]) if vix_series is not None and not vix_series.empty else 0.0
+            vix_value = (
+                float(vix_series.iloc[-1])
+                if vix_series is not None and not vix_series.empty
+                else 0.0
+            )
             fii_net_3d = float(fii_hist["fii_net"].tail(3).sum()) if not fii_hist.empty else 0.0
 
             regime_signals = build_regime_signals(
@@ -113,7 +119,12 @@ class BacktestEngine:
                 continue
 
             regime_rows.append(
-                {"timestamp": ts, "regime": regime.value, "vix": regime_signals.india_vix, "adx": regime_signals.adx_14}
+                {
+                    "timestamp": ts,
+                    "regime": regime.value,
+                    "vix": regime_signals.india_vix,
+                    "adx": regime_signals.adx_14,
+                }
             )
 
             signal = self._next_signal(
@@ -128,11 +139,14 @@ class BacktestEngine:
             previous_regime = regime
 
             fill_reference_price = open_price if self.fill_on == "open" else close_price
-            can_trade = self.circuit_breaker.can_trade() if self.circuit_breaker is not None else True
+            can_trade = (
+                self.circuit_breaker.can_trade() if self.circuit_breaker is not None else True
+            )
             if signal is not None and signal.is_actionable:
                 is_exit = signal.signal_type == SignalType.EXIT
                 if not can_trade and not is_exit:
-                    # Circuit-breaker halt blocks new entries/adjustments, but exits must still be allowed.
+                    # Circuit-breaker halt blocks new entries/adjustments.
+                    # Exits must still be allowed.
                     continue
                 if signal.signal_type == SignalType.EXIT and not signal.orders:
                     net_qty = int(positions.get(signal.instrument, 0))
@@ -182,7 +196,9 @@ class BacktestEngine:
                 default_underlying_price=close_price,
             )
             open_positions = sum(1 for _, qty in positions.items() if qty != 0)
-            equity_rows.append({"timestamp": ts, "cash": cash, "open_positions": open_positions, "equity": equity})
+            equity_rows.append(
+                {"timestamp": ts, "cash": cash, "open_positions": open_positions, "equity": equity}
+            )
 
             if self.circuit_breaker is not None:
                 unrealized_pnl = self._compute_unrealized_pnl(
@@ -212,7 +228,9 @@ class BacktestEngine:
             monte_carlo_permutations=self.monte_carlo_permutations,
             minimum_trade_count=self.minimum_trade_count,
         )
-        return BacktestResult(equity_curve=equity_df, fills=fills_df, regimes=regimes_df, metrics=metrics)
+        return BacktestResult(
+            equity_curve=equity_df, fills=fills_df, regimes=regimes_df, metrics=metrics
+        )
 
     def _next_signal(
         self,
@@ -250,7 +268,11 @@ class BacktestEngine:
             return pd.DataFrame(columns=["timestamp", "close"])
         out["timestamp"] = pd.to_datetime(out["timestamp"], errors="coerce")
         out["close"] = pd.to_numeric(out["close"], errors="coerce")
-        return out.dropna(subset=["timestamp", "close"]).sort_values("timestamp").reset_index(drop=True)
+        return (
+            out.dropna(subset=["timestamp", "close"])
+            .sort_values("timestamp")
+            .reset_index(drop=True)
+        )
 
     @staticmethod
     def _prep_fii(fii_df: pd.DataFrame | None) -> pd.DataFrame:
@@ -279,7 +301,9 @@ class BacktestEngine:
         return out
 
     @staticmethod
-    def _latest_chain_asof(chain_df: pd.DataFrame, ts: datetime, *, strict: bool = False) -> pd.DataFrame | None:
+    def _latest_chain_asof(
+        chain_df: pd.DataFrame, ts: datetime, *, strict: bool = False
+    ) -> pd.DataFrame | None:
         if chain_df.empty:
             return None
         cutoff = pd.Timestamp(ts)
@@ -307,7 +331,13 @@ class BacktestEngine:
         if chain_asof is None or chain_asof.empty:
             return prices
 
-        symbol_col = "symbol" if "symbol" in chain_asof.columns else "tradingsymbol" if "tradingsymbol" in chain_asof.columns else None
+        symbol_col = (
+            "symbol"
+            if "symbol" in chain_asof.columns
+            else "tradingsymbol"
+            if "tradingsymbol" in chain_asof.columns
+            else None
+        )
         if symbol_col is None:
             return prices
 
@@ -403,7 +433,11 @@ class BacktestEngine:
         current_qty = int(positions.get(instrument, 0))
         current_avg = float(avg_cost_by_instrument.get(instrument, 0.0))
 
-        if current_qty == 0 or (current_qty > 0 and qty_change > 0) or (current_qty < 0 and qty_change < 0):
+        if (
+            current_qty == 0
+            or (current_qty > 0 and qty_change > 0)
+            or (current_qty < 0 and qty_change < 0)
+        ):
             new_qty = current_qty + qty_change
             if new_qty == 0:
                 positions[instrument] = 0
@@ -412,7 +446,9 @@ class BacktestEngine:
 
             total_qty = abs(current_qty) + abs(qty_change)
             if total_qty > 0:
-                new_avg = ((abs(current_qty) * current_avg) + (abs(qty_change) * fill_price)) / total_qty
+                new_avg = (
+                    (abs(current_qty) * current_avg) + (abs(qty_change) * fill_price)
+                ) / total_qty
                 positions[instrument] = new_qty
                 avg_cost_by_instrument[instrument] = float(new_avg)
             return 0.0

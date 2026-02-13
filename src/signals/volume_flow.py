@@ -20,4 +20,6 @@ def fii_net_rolling(fii_net: pd.Series, window: int = 3) -> pd.Series:
 
 
 def fii_direction(fii_net: pd.Series, window: int = 3) -> pd.Series:
-    return fii_net_rolling(fii_net, window=window).apply(lambda v: 1 if v > 0 else (-1 if v < 0 else 0))
+    return fii_net_rolling(fii_net, window=window).apply(
+        lambda v: 1 if v > 0 else (-1 if v < 0 else 0)
+    )

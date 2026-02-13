@@ -66,9 +66,24 @@ def test_summarize_sensitivity_results_calculates_robustness():
 def test_aggregate_cross_instrument_results_groups_by_strategy():
     summary = aggregate_cross_instrument_results(
         [
-            {"strategy": "iron_condor", "symbol": "NIFTY", "total_return_pct": 10.0, "sharpe_ratio": 1.2},
-            {"strategy": "iron_condor", "symbol": "BANKNIFTY", "total_return_pct": 5.0, "sharpe_ratio": 0.8},
-            {"strategy": "momentum", "symbol": "NIFTY", "total_return_pct": -2.0, "sharpe_ratio": 0.2},
+            {
+                "strategy": "iron_condor",
+                "symbol": "NIFTY",
+                "total_return_pct": 10.0,
+                "sharpe_ratio": 1.2,
+            },
+            {
+                "strategy": "iron_condor",
+                "symbol": "BANKNIFTY",
+                "total_return_pct": 5.0,
+                "sharpe_ratio": 0.8,
+            },
+            {
+                "strategy": "momentum",
+                "symbol": "NIFTY",
+                "total_return_pct": -2.0,
+                "sharpe_ratio": 0.2,
+            },
         ]
     )
     assert len(summary) == 2

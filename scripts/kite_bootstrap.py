@@ -42,9 +42,13 @@ def parse_args() -> argparse.Namespace:
     exchange.add_argument("--request-token", required=True, help="request_token from redirect URL.")
     exchange.add_argument("--api-key", help="KITE_API_KEY override.")
     exchange.add_argument("--api-secret", help="KITE_API_SECRET override.")
-    exchange.add_argument("--save-env", action="store_true", help="Persist KITE_ACCESS_TOKEN to .env file.")
+    exchange.add_argument(
+        "--save-env", action="store_true", help="Persist KITE_ACCESS_TOKEN to .env file."
+    )
     exchange.add_argument("--env-file", default=".env", help="Path to env file (default: .env).")
-    exchange.add_argument("--verify", action="store_true", help="Call kite.profile() to verify token.")
+    exchange.add_argument(
+        "--verify", action="store_true", help="Call kite.profile() to verify token."
+    )
     exchange.add_argument(
         "--print-env",
         action="store_true",
@@ -63,7 +67,9 @@ def _kite_connect(api_key: str):
     try:
         from kiteconnect import KiteConnect
     except ImportError as exc:  # pragma: no cover - optional dependency
-        raise RuntimeError("kiteconnect package is not installed. Install with: pip install kiteconnect") from exc
+        raise RuntimeError(
+            "kiteconnect package is not installed. Install with: pip install kiteconnect"
+        ) from exc
     return KiteConnect(api_key=api_key)
 
 
@@ -72,10 +78,7 @@ def _login_url(api_key: str) -> str:
 
 
 def _upsert_env_value(env_path: Path, key: str, value: str):
-    if env_path.exists():
-        lines = env_path.read_text(encoding="utf-8").splitlines()
-    else:
-        lines = []
+    lines = env_path.read_text(encoding="utf-8").splitlines() if env_path.exists() else []
 
     replaced = False
     out: list[str] = []
@@ -146,4 +149,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

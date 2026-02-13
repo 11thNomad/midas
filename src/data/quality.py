@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
 
 import pandas as pd
 
@@ -100,12 +99,21 @@ def assess_candle_quality(
         if col not in data.columns:
             raise ValueError(f"Missing required OHLC column: {col}")
 
-    invalid_ohlc_rows = int(((data["high"] < data[["open", "close"]].max(axis=1)) | (data["low"] > data[["open", "close"]].min(axis=1))).sum())
+    invalid_ohlc_rows = int(
+        (
+            (data["high"] < data[["open", "close"]].max(axis=1))
+            | (data["low"] > data[["open", "close"]].min(axis=1))
+        ).sum()
+    )
 
-    negative_or_zero_price_rows = int((data[["open", "high", "low", "close"]] <= 0).any(axis=1).sum())
+    negative_or_zero_price_rows = int(
+        (data[["open", "high", "low", "close"]] <= 0).any(axis=1).sum()
+    )
 
     # If sorting changes order materially, original data was non-monotonic.
-    non_monotonic_timestamps = int((pd.to_datetime(df["timestamp"], errors="coerce").diff() < pd.Timedelta(0)).sum())
+    non_monotonic_timestamps = int(
+        (pd.to_datetime(df["timestamp"], errors="coerce").diff() < pd.Timedelta(0)).sum()
+    )
 
     # Gap checks
     deltas = data["timestamp"].diff().dropna()
@@ -175,11 +183,14 @@ def evaluate_quality_gate(
         if value > limit:
             violations.append(f"{label}={value} > {limit}")
 
-    if thresholds.max_largest_gap_minutes is not None:
-        if (report.largest_gap_minutes or 0.0) > thresholds.max_largest_gap_minutes:
-            violations.append(
-                f"largest_gap_minutes={report.largest_gap_minutes} > {thresholds.max_largest_gap_minutes}"
-            )
+    if (
+        thresholds.max_largest_gap_minutes is not None
+        and (report.largest_gap_minutes or 0.0) > thresholds.max_largest_gap_minutes
+    ):
+        violations.append(
+            "largest_gap_minutes="
+            f"{report.largest_gap_minutes} > {thresholds.max_largest_gap_minutes}"
+        )
 
     issue_count = summarize_issue_count(report)
     status = "ok" if not violations else "failed_thresholds"

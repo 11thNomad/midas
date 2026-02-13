@@ -4,6 +4,16 @@
 # Changing a parameter should NEVER require a code change.
 # ============================================================
 
+# strategy:   # early exit
+#   iron_condor:
+#     entry_day: "Monday"          # or Tuesday if Monday is holiday
+#     exit_rules:
+#       profit_target_pct: 50      # exit at 50% of max premium captured
+#       time_exit_day: "Wednesday"
+#       time_exit_time: "15:00"    # 3 PM — 30 min before close
+#       stop_loss_pct: 100         # exit if loss equals premium received
+#     hold_through_expiry: false   # THE KEY SETTING
+
 # === Market Hours (IST) ===
 market:
   exchange: NSE
@@ -192,3 +202,5 @@ data_quality:
       max_largest_gap_minutes: 6000
     5m:
       max_largest_gap_minutes: 8000
+
+

@@ -59,7 +59,9 @@ class NseFiiClient:
 def normalize_fii_payload(payload: list[dict]) -> pd.DataFrame:
     """Convert NSE category rows into a date-indexed FII/DII table."""
     if not payload:
-        return pd.DataFrame(columns=["date", "fii_buy", "fii_sell", "fii_net", "dii_buy", "dii_sell", "dii_net"])
+        return pd.DataFrame(
+            columns=["date", "fii_buy", "fii_sell", "fii_net", "dii_buy", "dii_sell", "dii_net"]
+        )
 
     rows = []
     for item in payload:
@@ -79,13 +81,17 @@ def normalize_fii_payload(payload: list[dict]) -> pd.DataFrame:
 
     raw = pd.DataFrame(rows)
     if raw.empty:
-        return pd.DataFrame(columns=["date", "fii_buy", "fii_sell", "fii_net", "dii_buy", "dii_sell", "dii_net"])
+        return pd.DataFrame(
+            columns=["date", "fii_buy", "fii_sell", "fii_net", "dii_buy", "dii_sell", "dii_net"]
+        )
 
     raw = raw.dropna(subset=["date"])
 
     def pivot_category(cat_label: str, prefix: str) -> pd.DataFrame:
         part = raw[raw["category"] == cat_label][["date", "buy", "sell", "net"]].copy()
-        return part.rename(columns={"buy": f"{prefix}_buy", "sell": f"{prefix}_sell", "net": f"{prefix}_net"})
+        return part.rename(
+            columns={"buy": f"{prefix}_buy", "sell": f"{prefix}_sell", "net": f"{prefix}_net"}
+        )
 
     fii = pivot_category("FII/FPI", "fii")
     dii = pivot_category("DII", "dii")

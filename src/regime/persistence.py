@@ -21,7 +21,9 @@ class RegimeSnapshotStore:
     def __post_init__(self):
         self._store = DataStore(base_dir=self.base_dir)
 
-    def persist_snapshot(self, snapshot: dict, *, symbol: str = "NIFTY", source: str = "regime_classifier") -> int:
+    def persist_snapshot(
+        self, snapshot: dict, *, symbol: str = "NIFTY", source: str = "regime_classifier"
+    ) -> int:
         frame = pd.DataFrame([snapshot])
         if "timestamp" not in frame.columns:
             raise ValueError("Snapshot requires 'timestamp' field.")
@@ -88,7 +90,9 @@ class StrategyTransitionStore:
     def __post_init__(self):
         self._store = DataStore(base_dir=self.base_dir)
 
-    def persist_transitions(self, transitions: list[dict], *, symbol: str = "NIFTY", source: str = "strategy_router") -> int:
+    def persist_transitions(
+        self, transitions: list[dict], *, symbol: str = "NIFTY", source: str = "strategy_router"
+    ) -> int:
         if not transitions:
             return 0
         frame = pd.DataFrame(transitions)

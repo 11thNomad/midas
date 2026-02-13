@@ -25,7 +25,9 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Download FII/DII cash market flow history.")
     parser.add_argument("--start", type=parse_date, help="Start date (YYYY-MM-DD)")
     parser.add_argument("--end", type=parse_date, help="End date (YYYY-MM-DD)")
-    parser.add_argument("--days", type=int, default=365, help="If no --start/--end, use trailing N days")
+    parser.add_argument(
+        "--days", type=int, default=365, help="If no --start/--end, use trailing N days"
+    )
     parser.add_argument("--output", default="data/raw/fii_dii.csv", help="CSV output path")
     parser.add_argument("--settings", default="config/settings.yaml", help="Settings YAML path")
     return parser.parse_args()
@@ -77,7 +79,11 @@ def main() -> int:
         if not old.empty:
             merged = pd.concat([old, df], ignore_index=True)
             merged["date"] = pd.to_datetime(merged["date"], errors="coerce")
-            merged = merged.dropna(subset=["date"]).sort_values("date").drop_duplicates(subset=["date"], keep="last")
+            merged = (
+                merged.dropna(subset=["date"])
+                .sort_values("date")
+                .drop_duplicates(subset=["date"], keep="last")
+            )
             df = merged.reset_index(drop=True)
 
     df.to_csv(out_path, index=False)

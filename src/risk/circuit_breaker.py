@@ -13,7 +13,6 @@ care what appliance you're running, it just cuts power if the load is dangerous.
 
 import json
 import os
-import structlog
 import tempfile
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -22,21 +21,25 @@ from pathlib import Path
 from threading import RLock
 from zoneinfo import ZoneInfo
 
+import structlog
+
 logger = structlog.get_logger()
 
 
 class BreakerState(Enum):
     """Circuit breaker states."""
-    NORMAL = "normal"               # All systems go
-    WARNING = "warning"             # Approaching limits, reduce exposure
-    TRIPPED_DAILY = "tripped_daily" # Daily loss limit hit — no new trades today
-    TRIPPED_DRAWDOWN = "tripped_dd" # Max drawdown hit — full shutdown
-    KILLED = "killed"               # Manual kill switch activated
+
+    NORMAL = "normal"  # All systems go
+    WARNING = "warning"  # Approaching limits, reduce exposure
+    TRIPPED_DAILY = "tripped_daily"  # Daily loss limit hit — no new trades today
+    TRIPPED_DRAWDOWN = "tripped_dd"  # Max drawdown hit — full shutdown
+    KILLED = "killed"  # Manual kill switch activated
 
 
 @dataclass
 class DailyPnL:
     """Track P&L for a single trading day."""
+
     date: date
     realized: float = 0.0
     unrealized: float = 0.0
@@ -190,18 +193,21 @@ class CircuitBreaker:
             return  # Already in a worse state
 
         max_daily_loss = self.initial_capital * (self.max_daily_loss_pct / 100)
-        if abs(self.daily_pnl.total) >= max_daily_loss and self.daily_pnl.total < 0:
-            if self.state != BreakerState.TRIPPED_DAILY:
-                self.state = BreakerState.TRIPPED_DAILY
-                self._log_trip(
-                    "DAILY_LOSS",
-                    f"Daily loss {self.daily_pnl.total:.0f} exceeds limit {max_daily_loss:.0f}",
-                )
-                logger.error(
-                    "Daily loss limit breached",
-                    daily_pnl=self.daily_pnl.total,
-                    limit=max_daily_loss,
-                )
+        if (
+            abs(self.daily_pnl.total) >= max_daily_loss
+            and self.daily_pnl.total < 0
+            and self.state != BreakerState.TRIPPED_DAILY
+        ):
+            self.state = BreakerState.TRIPPED_DAILY
+            self._log_trip(
+                "DAILY_LOSS",
+                f"Daily loss {self.daily_pnl.total:.0f} exceeds limit {max_daily_loss:.0f}",
+            )
+            logger.error(
+                "Daily loss limit breached",
+                daily_pnl=self.daily_pnl.total,
+                limit=max_daily_loss,
+            )
 
     def _check_drawdown(self):
         """Trip if drawdown from peak exceeds limit."""
@@ -213,23 +219,26 @@ class CircuitBreaker:
 
         drawdown_pct = ((self.peak_equity - self.current_equity) / self.peak_equity) * 100
 
-        if drawdown_pct >= self.max_drawdown_pct:
-            if self.state != BreakerState.TRIPPED_DRAWDOWN:
-                self.state = BreakerState.TRIPPED_DRAWDOWN
-                self._log_trip(
-                    "MAX_DRAWDOWN",
-                    f"Drawdown {drawdown_pct:.1f}% exceeds limit {self.max_drawdown_pct}%",
-                )
-                logger.critical(
-                    "Max drawdown breached — FULL SHUTDOWN",
-                    drawdown_pct=drawdown_pct,
-                    peak=self.peak_equity,
-                    current=self.current_equity,
-                )
+        if drawdown_pct >= self.max_drawdown_pct and self.state != BreakerState.TRIPPED_DRAWDOWN:
+            self.state = BreakerState.TRIPPED_DRAWDOWN
+            self._log_trip(
+                "MAX_DRAWDOWN",
+                f"Drawdown {drawdown_pct:.1f}% exceeds limit {self.max_drawdown_pct}%",
+            )
+            logger.critical(
+                "Max drawdown breached — FULL SHUTDOWN",
+                drawdown_pct=drawdown_pct,
+                peak=self.peak_equity,
+                current=self.current_equity,
+            )
 
     def _check_warning(self):
         """Issue warning when approaching daily limit and clear when recovered."""
-        if self.state in (BreakerState.TRIPPED_DAILY, BreakerState.TRIPPED_DRAWDOWN, BreakerState.KILLED):
+        if self.state in (
+            BreakerState.TRIPPED_DAILY,
+            BreakerState.TRIPPED_DRAWDOWN,
+            BreakerState.KILLED,
+        ):
             return
 
         max_daily_loss = self.initial_capital * (self.max_daily_loss_pct / 100)
@@ -267,15 +276,17 @@ class CircuitBreaker:
 
     def _log_trip(self, trip_type: str, reason: str):
         """Record trip event for post-analysis."""
-        self.trip_history.append({
-            "timestamp": datetime.now().isoformat(),
-            "type": trip_type,
-            "reason": reason,
-            "equity": self.current_equity,
-            "peak_equity": self.peak_equity,
-            "daily_pnl": self.daily_pnl.total,
-            "state": self.state.value,
-        })
+        self.trip_history.append(
+            {
+                "timestamp": datetime.now().isoformat(),
+                "type": trip_type,
+                "reason": reason,
+                "equity": self.current_equity,
+                "peak_equity": self.peak_equity,
+                "daily_pnl": self.daily_pnl.total,
+                "state": self.state.value,
+            }
+        )
 
     # === Reporting ===
 
@@ -307,7 +318,11 @@ class CircuitBreaker:
             }
 
     def __repr__(self) -> str:
-        return f"<CircuitBreaker [{self.state.value}] equity={self.current_equity:.0f} dd={self.status()['drawdown_pct']:.1f}%>"
+        drawdown_pct = self.status()["drawdown_pct"]
+        return (
+            f"<CircuitBreaker [{self.state.value}] "
+            f"equity={self.current_equity:.0f} dd={drawdown_pct:.1f}%>"
+        )
 
     def _today(self, *, as_of: datetime | None = None) -> date:
         try:
@@ -318,7 +333,10 @@ class CircuitBreaker:
                 return as_of.replace(tzinfo=zone).date()
             return as_of.astimezone(zone).date()
         except Exception:
-            logger.warning("Invalid trading timezone, falling back to UTC", trading_timezone=self.trading_timezone)
+            logger.warning(
+                "Invalid trading timezone, falling back to UTC",
+                trading_timezone=self.trading_timezone,
+            )
             if as_of is None:
                 return datetime.now(ZoneInfo("UTC")).date()
             if as_of.tzinfo is None:
@@ -342,7 +360,9 @@ class CircuitBreaker:
             self.state = BreakerState(state_value)
             self.peak_equity = float(payload.get("peak_equity", self.peak_equity))
             self.current_equity = float(payload.get("current_equity", self.current_equity))
-            self.open_position_count = int(payload.get("open_position_count", self.open_position_count))
+            self.open_position_count = int(
+                payload.get("open_position_count", self.open_position_count)
+            )
 
             daily = payload.get("daily_pnl", {})
             daily_date_raw = daily.get("date")
@@ -395,4 +415,6 @@ class CircuitBreaker:
                 tmp_path = Path(tmp.name)
             os.replace(tmp_path, path)
         except Exception as exc:
-            logger.warning("Failed to persist circuit breaker state", path=str(path), error=str(exc))
+            logger.warning(
+                "Failed to persist circuit breaker state", path=str(path), error=str(exc)
+            )

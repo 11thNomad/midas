@@ -40,7 +40,9 @@ def parse_args() -> argparse.Namespace:
         help="Extra days loaded before --start for indicator warmup (excluded from output).",
     )
     parser.add_argument("--settings", default="config/settings.yaml", help="Settings YAML path")
-    parser.add_argument("--persist", action="store_true", help="Persist replay snapshots/transitions into cache")
+    parser.add_argument(
+        "--persist", action="store_true", help="Persist replay snapshots/transitions into cache"
+    )
     return parser.parse_args()
 
 
@@ -51,7 +53,9 @@ def load_settings(path: str) -> dict:
     return yaml.safe_load(settings_path.read_text())
 
 
-def resolve_windows(args: argparse.Namespace) -> tuple[datetime | None, datetime | None, datetime | None]:
+def resolve_windows(
+    args: argparse.Namespace,
+) -> tuple[datetime | None, datetime | None, datetime | None]:
     analysis_start = args.start
     load_start = args.start
     if args.start is not None and args.indicator_warmup_days > 0:
@@ -83,7 +87,9 @@ def main() -> int:
     cache_dir = REPO_ROOT / settings.get("data", {}).get("cache_dir", "data/cache")
 
     store = DataStore(base_dir=str(cache_dir))
-    classifier = RegimeClassifier(thresholds=RegimeThresholds.from_config(settings.get("regime", {})))
+    classifier = RegimeClassifier(
+        thresholds=RegimeThresholds.from_config(settings.get("regime", {}))
+    )
 
     candles = store.read_time_series(
         "candles",
@@ -96,7 +102,9 @@ def main() -> int:
         print("No candle data available for requested window.")
         return 1
 
-    vix = store.read_time_series("vix", symbol="INDIAVIX", timeframe="1d", start=load_start, end=end)
+    vix = store.read_time_series(
+        "vix", symbol="INDIAVIX", timeframe="1d", start=load_start, end=end
+    )
     fii = store.read_time_series(
         "fii_dii",
         symbol="NSE",
@@ -120,8 +128,11 @@ def main() -> int:
     print("Regime Dry Replay")
     print("=" * 72)
     print(f"symbol={args.symbol} timeframe={args.timeframe}")
-    print(f"load_window={load_start.date() if load_start else 'begin'} -> {end.date() if end else 'latest'}")
-    print(f"analysis_window={analysis_start.date() if analysis_start else 'begin'} -> {end.date() if end else 'latest'}")
+    load_window_start = load_start.date() if load_start else "begin"
+    analysis_window_start = analysis_start.date() if analysis_start else "begin"
+    window_end = end.date() if end else "latest"
+    print(f"load_window={load_window_start} -> {window_end}")
+    print(f"analysis_window={analysis_window_start} -> {window_end}")
     print(f"indicator_warmup_days={args.indicator_warmup_days}")
     print(f"bars_loaded={len(candles)} snapshots={len(snapshots)} transitions={len(transitions)}")
 

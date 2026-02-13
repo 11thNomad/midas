@@ -110,7 +110,12 @@ def main() -> int:
         "results": results,
     }
 
-    output = Path(args.output) if args.output else report_dir / f"{args.dataset}_quality_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}.json"
+    output = (
+        Path(args.output)
+        if args.output
+        else report_dir
+        / f"{args.dataset}_quality_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}.json"
+    )
     if not output.is_absolute():
         output = REPO_ROOT / output
     output.parent.mkdir(parents=True, exist_ok=True)

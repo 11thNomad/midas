@@ -6,19 +6,20 @@ Every component speaks the same language.
 """
 
 from datetime import datetime
-from enum import Enum
-from pydantic import BaseModel, Field
+from enum import StrEnum
 
+from pydantic import BaseModel, Field
 
 # === Enums ===
 
-class Exchange(str, Enum):
+
+class Exchange(StrEnum):
     NSE = "NSE"
     BSE = "BSE"
     NFO = "NFO"  # NSE F&O segment
 
 
-class InstrumentType(str, Enum):
+class InstrumentType(StrEnum):
     INDEX = "INDEX"
     EQUITY = "EQUITY"
     FUTURES = "FUTURES"
@@ -26,19 +27,19 @@ class InstrumentType(str, Enum):
     PUT = "PE"
 
 
-class OrderSide(str, Enum):
+class OrderSide(StrEnum):
     BUY = "BUY"
     SELL = "SELL"
 
 
-class OrderType(str, Enum):
+class OrderType(StrEnum):
     MARKET = "MARKET"
     LIMIT = "LIMIT"
-    SL = "SL"          # Stop-loss
-    SL_M = "SL-M"      # Stop-loss market
+    SL = "SL"  # Stop-loss
+    SL_M = "SL-M"  # Stop-loss market
 
 
-class OrderStatus(str, Enum):
+class OrderStatus(StrEnum):
     PENDING = "PENDING"
     OPEN = "OPEN"
     FILLED = "FILLED"
@@ -49,15 +50,17 @@ class OrderStatus(str, Enum):
 
 # === Market Data Models ===
 
+
 class Candle(BaseModel):
     """Single OHLCV candle."""
+
     timestamp: datetime
     open: float
     high: float
     low: float
     close: float
     volume: int = 0
-    oi: int = 0          # Open interest (for derivatives)
+    oi: int = 0  # Open interest (for derivatives)
 
     @property
     def typical_price(self) -> float:
@@ -70,7 +73,8 @@ class Candle(BaseModel):
 
 class OptionGreeks(BaseModel):
     """Greeks for a single option contract."""
-    iv: float = 0.0           # Implied volatility
+
+    iv: float = 0.0  # Implied volatility
     delta: float = 0.0
     gamma: float = 0.0
     theta: float = 0.0
@@ -80,11 +84,12 @@ class OptionGreeks(BaseModel):
 
 class OptionContract(BaseModel):
     """Single option contract with market data and Greeks."""
-    symbol: str                    # e.g., "NIFTY2430725500CE"
+
+    symbol: str  # e.g., "NIFTY2430725500CE"
     instrument_type: InstrumentType
     strike: float
     expiry: datetime
-    ltp: float = 0.0               # Last traded price
+    ltp: float = 0.0  # Last traded price
     bid: float = 0.0
     ask: float = 0.0
     volume: int = 0
@@ -105,7 +110,8 @@ class OptionContract(BaseModel):
 
 class OptionChain(BaseModel):
     """Full option chain for an instrument at a single timestamp."""
-    underlying: str                # e.g., "NIFTY"
+
+    underlying: str  # e.g., "NIFTY"
     underlying_price: float
     timestamp: datetime
     expiry: datetime
@@ -140,16 +146,18 @@ class OptionChain(BaseModel):
 
 # === Order Models ===
 
+
 class Order(BaseModel):
     """An order to be placed or that has been placed."""
-    id: str = ""                    # Assigned by broker on placement
+
+    id: str = ""  # Assigned by broker on placement
     symbol: str
     exchange: Exchange = Exchange.NFO
     side: OrderSide
     order_type: OrderType = OrderType.LIMIT
     quantity: int
-    price: float = 0.0             # For LIMIT orders
-    trigger_price: float = 0.0     # For SL orders
+    price: float = 0.0  # For LIMIT orders
+    trigger_price: float = 0.0  # For SL orders
     status: OrderStatus = OrderStatus.PENDING
 
     # Tracking
@@ -165,6 +173,7 @@ class Order(BaseModel):
 
 class Position(BaseModel):
     """A currently held position."""
+
     symbol: str
     exchange: Exchange = Exchange.NFO
     side: OrderSide
@@ -186,8 +195,10 @@ class Position(BaseModel):
 
 # === Trade Journal Models ===
 
+
 class TradeRecord(BaseModel):
     """A completed trade (entry + exit) for the journal."""
+
     id: str
     strategy_name: str
     instrument: str

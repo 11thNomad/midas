@@ -33,7 +33,9 @@ def parse_args() -> argparse.Namespace:
     login_url.add_argument("--api-key", help="Kite API key. Defaults to KITE_API_KEY env.")
 
     exchange = sub.add_parser("exchange", help="Exchange request_token for access_token.")
-    exchange.add_argument("--request-token", required=True, help="request_token from redirect callback URL.")
+    exchange.add_argument(
+        "--request-token", required=True, help="request_token from redirect callback URL."
+    )
     exchange.add_argument("--api-key", help="Kite API key. Defaults to KITE_API_KEY env.")
     exchange.add_argument("--api-secret", help="Kite API secret. Defaults to KITE_API_SECRET env.")
     exchange.add_argument(
@@ -67,7 +69,9 @@ def _run_exchange(args: argparse.Namespace):
     try:
         from kiteconnect import KiteConnect
     except ImportError as exc:  # pragma: no cover - depends on optional package
-        raise RuntimeError("kiteconnect package is not installed. Install with: pip install kiteconnect") from exc
+        raise RuntimeError(
+            "kiteconnect package is not installed. Install with: pip install kiteconnect"
+        ) from exc
 
     kite = KiteConnect(api_key=api_key)
     data = kite.generate_session(request_token, api_secret=api_secret)
@@ -99,4 +103,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
