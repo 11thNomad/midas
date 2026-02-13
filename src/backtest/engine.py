@@ -45,6 +45,7 @@ class BacktestEngine:
         vix_df: pd.DataFrame | None = None,
         fii_df: pd.DataFrame | None = None,
         option_chain_df: pd.DataFrame | None = None,
+        analysis_start: datetime | None = None,
     ) -> BacktestResult:
         if candles.empty:
             empty = pd.DataFrame()
@@ -78,6 +79,7 @@ class BacktestEngine:
         equity_rows: list[dict] = []
         regime_rows: list[dict] = []
         previous_regime = self.classifier.current_regime
+        analysis_cutoff = pd.Timestamp(analysis_start) if analysis_start is not None else None
 
         for i in range(len(bars)):
             row = bars.iloc[i]
@@ -106,6 +108,10 @@ class BacktestEngine:
                 fii_net_3d=fii_net_3d,
             )
             regime = self.classifier.classify(regime_signals)
+            if analysis_cutoff is not None and pd.Timestamp(ts) < analysis_cutoff:
+                previous_regime = regime
+                continue
+
             regime_rows.append(
                 {"timestamp": ts, "regime": regime.value, "vix": regime_signals.india_vix, "adx": regime_signals.adx_14}
             )

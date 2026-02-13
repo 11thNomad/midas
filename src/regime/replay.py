@@ -24,6 +24,7 @@ def replay_regimes_no_lookahead(
     vix_df: pd.DataFrame | None = None,
     fii_df: pd.DataFrame | None = None,
     chain_by_timestamp: dict[datetime, pd.DataFrame] | None = None,
+    analysis_start: datetime | None = None,
 ) -> ReplayResult:
     """Replay regime labels in chronological order using only data available at each timestamp."""
     if candles.empty:
@@ -68,6 +69,8 @@ def replay_regimes_no_lookahead(
 
     transitions = pd.DataFrame(classifier.history)
     snapshots_df = pd.DataFrame(snapshots)
+    snapshots_df = _filter_from_analysis_start(snapshots_df, timestamp_col="timestamp", analysis_start=analysis_start)
+    transitions = _filter_from_analysis_start(transitions, timestamp_col="timestamp", analysis_start=analysis_start)
     return ReplayResult(snapshots=snapshots_df, transitions=transitions)
 
 
@@ -100,3 +103,16 @@ def _slice_by_ts(df: pd.DataFrame, ts: datetime, timestamp_col: str) -> pd.DataF
         return df
     cutoff = pd.Timestamp(ts)
     return df.loc[df[timestamp_col] <= cutoff].reset_index(drop=True)
+
+
+def _filter_from_analysis_start(
+    frame: pd.DataFrame,
+    *,
+    timestamp_col: str,
+    analysis_start: datetime | None,
+) -> pd.DataFrame:
+    if analysis_start is None or frame.empty or timestamp_col not in frame.columns:
+        return frame
+    cutoff = pd.Timestamp(analysis_start)
+    ts = pd.to_datetime(frame[timestamp_col], errors="coerce")
+    return frame.loc[ts >= cutoff].reset_index(drop=True)

@@ -289,3 +289,82 @@ def test_engine_infers_buy_for_exit_without_orders_when_short():
     result = engine.run(candles=candles)
     sides = result.fills["side"].tolist()
     assert sides == ["SELL", "BUY"]
+
+
+def test_engine_analysis_start_skips_pre_window_trading_and_outputs():
+    candles = pd.DataFrame(
+        {
+            "timestamp": pd.date_range("2026-01-01", periods=5, freq="D"),
+            "open": [100, 101, 102, 103, 104],
+            "high": [101, 102, 103, 104, 105],
+            "low": [99, 100, 101, 102, 103],
+            "close": [100, 101, 102, 103, 104],
+        }
+    )
+    strategy = OneShotStrategy(
+        name="oneshot",
+        config={
+            "instrument": "NIFTY",
+            "active_regimes": [RegimeState.LOW_VOL_RANGING.value],
+            "exit_ts": datetime(2026, 1, 5),
+        },
+    )
+    engine = BacktestEngine(
+        classifier=RegimeClassifier(thresholds=RegimeThresholds()),
+        strategy=strategy,
+        simulator=FillSimulator(slippage_pct=0.0, commission_per_order=0.0),
+        initial_capital=1000.0,
+    )
+
+    result = engine.run(candles=candles, analysis_start=datetime(2026, 1, 3))
+
+    assert len(result.equity_curve) == 3
+    assert len(result.regimes) == 3
+    fill_ts = pd.to_datetime(result.fills["timestamp"], errors="coerce")
+    assert fill_ts.min() >= pd.Timestamp("2026-01-03")
+
+
+def test_engine_analysis_start_keeps_warmup_candle_history_context():
+    candles = pd.DataFrame(
+        {
+            "timestamp": pd.date_range("2026-01-01", periods=4, freq="D"),
+            "open": [100, 101, 102, 103],
+            "high": [101, 102, 103, 104],
+            "low": [99, 100, 101, 102],
+            "close": [100, 101, 102, 103],
+        }
+    )
+
+    class HistoryLengthStrategy(BaseStrategy):
+        def __init__(self, name: str, config: dict):
+            super().__init__(name, config)
+            self.lengths: list[int] = []
+
+        def generate_signal(self, market_data: dict, regime: RegimeState) -> Signal:
+            self.lengths.append(len(market_data["candles"]))
+            return Signal(
+                signal_type=SignalType.NO_SIGNAL,
+                strategy_name=self.name,
+                instrument=self.config.get("instrument", "NIFTY"),
+                timestamp=market_data["timestamp"],
+                regime=regime,
+            )
+
+        def get_exit_conditions(self, market_data: dict) -> Signal | None:
+            return None
+
+        def compute_position_size(self, capital: float, risk_per_trade: float) -> int:
+            return 1
+
+    strategy = HistoryLengthStrategy(
+        name="history_len_warm",
+        config={"instrument": "NIFTY", "active_regimes": [RegimeState.LOW_VOL_RANGING.value]},
+    )
+    engine = BacktestEngine(
+        classifier=RegimeClassifier(thresholds=RegimeThresholds()),
+        strategy=strategy,
+        simulator=FillSimulator(slippage_pct=0.0, commission_per_order=0.0),
+        initial_capital=1000.0,
+    )
+    engine.run(candles=candles, analysis_start=datetime(2026, 1, 3))
+    assert strategy.lengths == [2, 3]

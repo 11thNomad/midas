@@ -79,3 +79,28 @@ def test_replay_with_empty_candles_returns_empty_frames():
     )
     assert result.snapshots.empty
     assert result.transitions.empty
+
+
+def test_replay_analysis_start_filters_output_rows():
+    candles = _candles(10)
+    vix = pd.DataFrame(
+        {
+            "timestamp": pd.date_range("2026-01-01", periods=10, freq="D"),
+            "close": [12.0 + 0.1 * i for i in range(10)],
+        }
+    )
+    cutoff = pd.Timestamp("2026-01-06")
+
+    result = replay_regimes_no_lookahead(
+        candles=candles,
+        classifier=RegimeClassifier(thresholds=RegimeThresholds()),
+        vix_df=vix,
+        analysis_start=cutoff.to_pydatetime(),
+    )
+
+    assert len(result.snapshots) == 5
+    snapshot_ts = pd.to_datetime(result.snapshots["timestamp"], errors="coerce")
+    assert snapshot_ts.min() >= cutoff
+    if not result.transitions.empty:
+        transition_ts = pd.to_datetime(result.transitions["timestamp"], errors="coerce")
+        assert transition_ts.min() >= cutoff

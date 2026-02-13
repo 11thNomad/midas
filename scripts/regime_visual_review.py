@@ -44,6 +44,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--start", type=parse_date, help="Start date YYYY-MM-DD")
     parser.add_argument("--end", type=parse_date, help="End date YYYY-MM-DD")
     parser.add_argument("--days", type=int, default=0, help="Shortcut: end=now, start=end-days")
+    parser.add_argument(
+        "--indicator-warmup-days",
+        type=int,
+        default=0,
+        help="Extra days loaded before analysis start for indicator warmup (excluded from output).",
+    )
     parser.add_argument("--settings", default="config/settings.yaml", help="Settings YAML path")
     parser.add_argument("--output-dir", default="data/reports", help="Directory for output artifacts")
     parser.add_argument("--run-name", default="regime_review", help="Prefix for output filenames")
@@ -57,12 +63,20 @@ def load_settings(path: str) -> dict:
     return yaml.safe_load(settings_path.read_text())
 
 
-def resolve_window(args: argparse.Namespace) -> tuple[datetime | None, datetime | None]:
+def resolve_windows(args: argparse.Namespace) -> tuple[datetime | None, datetime | None, datetime | None]:
+    analysis_start: datetime | None
+    end: datetime | None
     if args.days and args.days > 0:
         end = datetime.now(UTC).replace(tzinfo=None)
-        start = end - timedelta(days=args.days)
-        return start, end
-    return args.start, args.end
+        analysis_start = end - timedelta(days=args.days)
+    else:
+        analysis_start = args.start
+        end = args.end
+
+    load_start = analysis_start
+    if analysis_start is not None and args.indicator_warmup_days > 0:
+        load_start = analysis_start - timedelta(days=args.indicator_warmup_days)
+    return load_start, analysis_start, end
 
 
 def build_visual_review_frame(*, candles: pd.DataFrame, snapshots: pd.DataFrame) -> pd.DataFrame:
@@ -181,31 +195,41 @@ def _write_checklist(*, review_csv: Path, chart_png: Path, html_report: Path, ou
 def main() -> int:
     args = parse_args()
     settings = load_settings(args.settings)
-    start, end = resolve_window(args)
+    load_start, analysis_start, end = resolve_windows(args)
 
     cache_dir = REPO_ROOT / settings.get("data", {}).get("cache_dir", "data/cache")
     output_dir = REPO_ROOT / args.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
 
     store = DataStore(base_dir=str(cache_dir))
-    candles = store.read_time_series("candles", symbol=args.symbol, timeframe=args.timeframe, start=start, end=end)
+    candles = store.read_time_series("candles", symbol=args.symbol, timeframe=args.timeframe, start=load_start, end=end)
     if candles.empty:
         print("No candle data available for requested window.")
         return 1
 
-    vix = store.read_time_series("vix", symbol="INDIAVIX", timeframe="1d", start=start, end=end)
+    vix = store.read_time_series("vix", symbol="INDIAVIX", timeframe="1d", start=load_start, end=end)
     fii = store.read_time_series(
         "fii_dii",
         symbol="NSE",
         timeframe="1d",
-        start=start,
+        start=load_start,
         end=end,
         timestamp_col="date",
     )
 
     classifier = RegimeClassifier(thresholds=RegimeThresholds.from_config(settings.get("regime", {})))
-    replay = replay_regimes_no_lookahead(candles=candles, classifier=classifier, vix_df=vix, fii_df=fii)
-    review = build_visual_review_frame(candles=candles, snapshots=replay.snapshots)
+    replay = replay_regimes_no_lookahead(
+        candles=candles,
+        classifier=classifier,
+        vix_df=vix,
+        fii_df=fii,
+        analysis_start=analysis_start,
+    )
+    candles_for_review = candles.copy()
+    if analysis_start is not None:
+        candles_for_review["timestamp"] = pd.to_datetime(candles_for_review["timestamp"], errors="coerce")
+        candles_for_review = candles_for_review.loc[candles_for_review["timestamp"] >= pd.Timestamp(analysis_start)]
+    review = build_visual_review_frame(candles=candles_for_review, snapshots=replay.snapshots)
 
     stamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
     prefix = f"{args.run_name}_{args.symbol}_{args.timeframe}_{stamp}"
@@ -227,9 +251,11 @@ def main() -> int:
         "symbol": args.symbol,
         "timeframe": args.timeframe,
         "window": {
-            "start": start.isoformat() if start else None,
+            "load_start": load_start.isoformat() if load_start else None,
+            "analysis_start": analysis_start.isoformat() if analysis_start else None,
             "end": end.isoformat() if end else None,
         },
+        "indicator_warmup_days": int(args.indicator_warmup_days),
         "rows": int(len(review)),
         "transitions": int(len(replay.transitions)),
         "files": {
@@ -245,7 +271,13 @@ def main() -> int:
     print("=" * 72)
     print("Regime Visual Review Artifact")
     print("=" * 72)
-    print(f"symbol={args.symbol} timeframe={args.timeframe} rows={len(review)} transitions={len(replay.transitions)}")
+    print(
+        f"symbol={args.symbol} timeframe={args.timeframe} "
+        f"rows={len(review)} transitions={len(replay.transitions)}"
+    )
+    print(f"load_window={load_start.date() if load_start else 'begin'} -> {end.date() if end else 'latest'}")
+    print(f"analysis_window={analysis_start.date() if analysis_start else 'begin'} -> {end.date() if end else 'latest'}")
+    print(f"indicator_warmup_days={args.indicator_warmup_days}")
     print(f"review_csv={review_csv.relative_to(REPO_ROOT)}")
     print(f"transitions_csv={transitions_csv.relative_to(REPO_ROOT)}")
     print(f"chart_png={chart_png.relative_to(REPO_ROOT)}")

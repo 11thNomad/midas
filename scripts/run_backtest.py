@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -55,6 +55,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--timeframe", default="1d", help="Candle timeframe partition")
     parser.add_argument("--from", dest="start", type=parse_date, help="Start date YYYY-MM-DD")
     parser.add_argument("--to", dest="end", type=parse_date, help="End date YYYY-MM-DD")
+    parser.add_argument(
+        "--indicator-warmup-days",
+        type=int,
+        default=0,
+        help="Extra days loaded before --from to warm indicators (excluded from backtest metrics/trades).",
+    )
     parser.add_argument(
         "--strategy",
         action="append",
@@ -195,6 +201,7 @@ def _run_single_backtest(
     vix: pd.DataFrame,
     fii: pd.DataFrame,
     option_chain: pd.DataFrame,
+    analysis_start: datetime,
     periods_per_year: int,
     risk_free_rate_annual: float,
     monte_carlo_permutations: int,
@@ -213,7 +220,13 @@ def _run_single_backtest(
         monte_carlo_permutations=monte_carlo_permutations,
         minimum_trade_count=minimum_trade_count,
     )
-    result = engine.run(candles=candles, vix_df=vix, fii_df=fii, option_chain_df=option_chain)
+    result = engine.run(
+        candles=candles,
+        vix_df=vix,
+        fii_df=fii,
+        option_chain_df=option_chain,
+        analysis_start=analysis_start,
+    )
     paths: dict[str, str] = {}
     if write_report:
         paths = write_backtest_report(result, output_dir=output_dir, run_name=run_name)
@@ -240,6 +253,7 @@ def _run_walk_forward_backtest(
     output_dir: str,
     run_name: str,
     write_report: bool,
+    indicator_warmup_days: int = 0,
 ) -> tuple[dict[str, float], dict[str, str]]:
     windows = generate_walk_forward_windows(
         start=start,
@@ -266,13 +280,22 @@ def _run_walk_forward_backtest(
             minimum_trade_count=minimum_trade_count,
         )
         test_candles = candles.loc[
-            (candles["timestamp"] >= pd.Timestamp(window.test_start))
+            (
+                candles["timestamp"]
+                >= pd.Timestamp(window.test_start - timedelta(days=indicator_warmup_days))
+            )
             & (candles["timestamp"] < pd.Timestamp(window.test_end))
         ]
         if test_candles.empty:
             continue
 
-        result = engine.run(candles=test_candles, vix_df=vix, fii_df=fii, option_chain_df=option_chain)
+        result = engine.run(
+            candles=test_candles,
+            vix_df=vix,
+            fii_df=fii,
+            option_chain_df=option_chain,
+            analysis_start=window.test_start,
+        )
         row = {
             "fold": i,
             "train_start": window.train_start.isoformat(),
@@ -374,6 +397,7 @@ def _run_strategy(
     vix: pd.DataFrame,
     fii: pd.DataFrame,
     option_chain: pd.DataFrame,
+    analysis_start: datetime,
     start: datetime,
     end: datetime,
     backtest_cfg: dict,
@@ -384,6 +408,7 @@ def _run_strategy(
     output_dir: str,
     run_name: str,
     write_report: bool,
+    indicator_warmup_days: int = 0,
 ) -> tuple[dict[str, float], dict[str, str]]:
     if walk_forward:
         return _run_walk_forward_backtest(
@@ -405,6 +430,7 @@ def _run_strategy(
             output_dir=output_dir,
             run_name=run_name,
             write_report=write_report,
+            indicator_warmup_days=indicator_warmup_days,
         )
     return _run_single_backtest(
         settings=settings,
@@ -415,6 +441,7 @@ def _run_strategy(
         vix=vix,
         fii=fii,
         option_chain=option_chain,
+        analysis_start=analysis_start,
         periods_per_year=periods_per_year,
         risk_free_rate_annual=risk_free_rate_annual,
         monte_carlo_permutations=monte_carlo_permutations,
@@ -437,13 +464,14 @@ def main() -> int:
     backtest_cfg = settings.get("backtest", {})
     start = args.start or parse_date(backtest_cfg.get("start_date", "2022-01-01"))
     end = args.end or parse_date(backtest_cfg.get("end_date", "2025-12-31"))
+    load_start = start - timedelta(days=max(int(args.indicator_warmup_days), 0))
 
-    vix = store.read_time_series("vix", symbol="INDIAVIX", timeframe="1d", start=start, end=end)
+    vix = store.read_time_series("vix", symbol="INDIAVIX", timeframe="1d", start=load_start, end=end)
     fii = store.read_time_series(
         "fii_dii",
         symbol="NSE",
         timeframe="1d",
-        start=start,
+        start=load_start,
         end=end,
         timestamp_col="date",
     )
@@ -473,6 +501,7 @@ def main() -> int:
     print("Backtest Run")
     print("=" * 72)
     print(f"symbols={symbols} timeframe={args.timeframe} start={start.date()} end={end.date()}")
+    print(f"load_start={load_start.date()} indicator_warmup_days={args.indicator_warmup_days}")
     print(f"strategies={strategy_ids}")
     print(f"walk_forward={args.walk_forward} sensitivity={sensitivity_enabled}")
 
@@ -485,7 +514,7 @@ def main() -> int:
             store=store,
             symbol=symbol,
             timeframe=args.timeframe,
-            start=start,
+            start=load_start,
             end=end,
         )
         if candles.empty:
@@ -509,6 +538,7 @@ def main() -> int:
                 vix=vix,
                 fii=fii,
                 option_chain=option_chain,
+                analysis_start=start,
                 start=start,
                 end=end,
                 backtest_cfg=backtest_cfg,
@@ -519,6 +549,7 @@ def main() -> int:
                 output_dir=output_dir,
                 run_name=run_name,
                 write_report=True,
+                indicator_warmup_days=max(int(args.indicator_warmup_days), 0),
             )
             runs_completed += 1
 
@@ -583,6 +614,7 @@ def main() -> int:
                     vix=vix,
                     fii=fii,
                     option_chain=option_chain,
+                    analysis_start=start,
                     start=start,
                     end=end,
                     backtest_cfg=backtest_cfg,
@@ -593,6 +625,7 @@ def main() -> int:
                     output_dir=output_dir,
                     run_name=f"{run_name}_sens_{variant['variant_id']}",
                     write_report=False,
+                    indicator_warmup_days=max(int(args.indicator_warmup_days), 0),
                 )
                 variant_rows.append(
                     {
