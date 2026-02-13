@@ -21,7 +21,7 @@ class PaperExecutionEngine:
     dataset: str = "paper_fills"
     slippage_bps: float = 5.0
     commission_per_order: float = 20.0
-    initial_capital: float = 1_000_000.0
+    initial_capital: float = 150_000.0
     circuit_breaker: CircuitBreaker | None = None
     _store: DataStore = field(init=False, repr=False)
     _fill_seq: int = field(default=0, init=False, repr=False)

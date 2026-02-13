@@ -373,9 +373,10 @@ def main() -> int:
     )
     backtest_cfg = settings.get("backtest", {})
     risk_cfg = settings.get("risk", {})
+    initial_capital = float(risk_cfg.get("initial_capital", 150_000.0) or 150_000.0)
     slippage_pct = float(backtest_cfg.get("slippage_pct", 0.05) or 0.05)
     breaker = CircuitBreaker(
-        initial_capital=500_000.0,
+        initial_capital=initial_capital,
         max_daily_loss_pct=float(risk_cfg.get("max_daily_loss_pct", 3.0) or 3.0),
         max_drawdown_pct=float(risk_cfg.get("max_drawdown_pct", 15.0) or 15.0),
         max_open_positions=int(risk_cfg.get("max_open_positions", 4) or 4),
@@ -384,6 +385,7 @@ def main() -> int:
         base_dir=str(cache_dir),
         slippage_bps=slippage_pct * 100.0,
         commission_per_order=float(backtest_cfg.get("commission_per_order", 20.0) or 20.0),
+        initial_capital=initial_capital,
         circuit_breaker=breaker,
     )
     stop_requested = False
@@ -400,6 +402,7 @@ def main() -> int:
     print("NiftyQuant Paper Loop (Paper Execution)")
     print("=" * 72)
     print(f"symbol={args.symbol} timeframe={args.timeframe} iterations={args.iterations}")
+    print(f"initial_capital={initial_capital:.2f}")
     print(f"cache_dir={cache_dir}")
     print(f"enabled_strategies={[s.name for s in router.strategies]}")
     chain_dte_max_label = chain_dte_max if chain_dte_max is not None else "none"
