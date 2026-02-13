@@ -135,8 +135,11 @@ backtest:
   # Realistic cost modeling
   slippage_pct: 0.05        # 0.05% per side
   commission_per_order: 20  # Zerodha flat fee
+  risk_free_rate_annual: 0.07  # Annualized risk-free rate for Sharpe/Sortino
   stt_pct: 0.0125           # Securities Transaction Tax (sell side, options)
+  exchange_txn_charges_pct: 0.053  # NSE F&O transaction charges
   gst_pct: 18.0             # GST on brokerage
+  sebi_fee_pct: 0.0001      # SEBI turnover fee
   stamp_duty_pct: 0.003     # Stamp duty
 
   # Walk-forward configuration

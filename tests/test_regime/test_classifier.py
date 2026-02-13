@@ -111,3 +111,10 @@ def test_adx_smoothing_and_hysteresis_hold_trend_state_on_small_dip():
 
     assert first == RegimeState.LOW_VOL_TRENDING
     assert second == RegimeState.LOW_VOL_TRENDING
+
+
+def test_classifier_returns_unknown_on_nan_inputs():
+    classifier = RegimeClassifier(thresholds=RegimeThresholds())
+    signals = RegimeSignals(timestamp=datetime(2026, 1, 1), india_vix=float("nan"), adx_14=25.0)
+    regime = classifier.classify(signals)
+    assert regime == RegimeState.UNKNOWN

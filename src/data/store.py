@@ -2,12 +2,21 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
+import os
+import tempfile
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pandas as pd
+
+try:
+    import pyarrow.parquet as pq
+except Exception:  # pragma: no cover - fallback when optional engine is unavailable.
+    pq = None
 
 
 @dataclass
@@ -20,6 +29,7 @@ class DataStore:
         self.root = Path(self.base_dir)
         self.root.mkdir(parents=True, exist_ok=True)
         self.meta_path = self.root / "metadata.json"
+        self.meta_lock_path = self.root / ".metadata.lock"
         if not self.meta_path.exists():
             self._save_metadata({"datasets": {}})
 
@@ -29,7 +39,18 @@ class DataStore:
         return json.loads(self.meta_path.read_text())
 
     def _save_metadata(self, data: dict):
-        self.meta_path.write_text(json.dumps(data, indent=2, sort_keys=True))
+        payload = json.dumps(data, indent=2, sort_keys=True)
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=str(self.root),
+            prefix="metadata.",
+            suffix=".tmp",
+            delete=False,
+        ) as tmp:
+            tmp.write(payload)
+            tmp_path = Path(tmp.name)
+        os.replace(tmp_path, self.meta_path)
 
     def _dataset_dir(self, dataset: str, symbol: str | None = None, timeframe: str | None = None) -> Path:
         parts = [self.root, dataset]
@@ -152,33 +173,47 @@ class DataStore:
         min_ts: pd.Timestamp,
         max_ts: pd.Timestamp,
     ):
-        metadata = self._load_metadata()
-        key_parts = [dataset]
-        if symbol:
-            key_parts.append(symbol.upper())
-        if timeframe:
-            key_parts.append(timeframe.lower())
-        key = ":".join(key_parts)
+        with self._metadata_lock():
+            metadata = self._load_metadata()
+            key_parts = [dataset]
+            if symbol:
+                key_parts.append(symbol.upper())
+            if timeframe:
+                key_parts.append(timeframe.lower())
+            key = ":".join(key_parts)
 
-        metadata.setdefault("datasets", {})[key] = {
-            "dataset": dataset,
-            "symbol": symbol,
-            "timeframe": timeframe,
-            "source": source,
-            "timestamp_col": timestamp_col,
-            "rows": int(rows),
-            "min_timestamp": pd.Timestamp(min_ts).isoformat(),
-            "max_timestamp": pd.Timestamp(max_ts).isoformat(),
-            "updated_at": datetime.now(UTC).isoformat(),
-        }
-        self._save_metadata(metadata)
+            metadata.setdefault("datasets", {})[key] = {
+                "dataset": dataset,
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "source": source,
+                "timestamp_col": timestamp_col,
+                "rows": int(rows),
+                "min_timestamp": pd.Timestamp(min_ts).isoformat(),
+                "max_timestamp": pd.Timestamp(max_ts).isoformat(),
+                "updated_at": datetime.now(UTC).isoformat(),
+            }
+            self._save_metadata(metadata)
 
     @staticmethod
     def _count_rows(directory: Path) -> int:
         total = 0
         for path in directory.glob("*.parquet"):
-            total += len(pd.read_parquet(path))
+            if pq is not None:
+                total += int(pq.ParquetFile(path).metadata.num_rows)
+            else:
+                total += len(pd.read_parquet(path, columns=[]))
         return total
 
     def get_metadata(self) -> dict:
         return self._load_metadata()
+
+    @contextmanager
+    def _metadata_lock(self):
+        self.meta_lock_path.touch(exist_ok=True)
+        with self.meta_lock_path.open("r+") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)

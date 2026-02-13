@@ -9,7 +9,8 @@ import pandas as pd
 
 from src.backtest.metrics import summarize_backtest
 from src.backtest.simulator import FillSimulator
-from src.regime.classifier import RegimeClassifier, RegimeSignals
+from src.regime.classifier import RegimeClassifier
+from src.risk.circuit_breaker import CircuitBreaker
 from src.signals.regime import build_regime_signals
 from src.strategies.base import BaseStrategy, RegimeState, Signal, SignalType
 
@@ -31,6 +32,9 @@ class BacktestEngine:
     simulator: FillSimulator
     initial_capital: float = 1_000_000.0
     periods_per_year: int = 252
+    risk_free_rate_annual: float = 0.07
+    circuit_breaker: CircuitBreaker | None = None
+    fill_on: str = "open"
 
     def run(
         self,
@@ -46,7 +50,12 @@ class BacktestEngine:
                 equity_curve=empty,
                 fills=empty,
                 regimes=empty,
-                metrics=summarize_backtest(equity_curve=empty, fills=empty, initial_capital=self.initial_capital),
+                metrics=summarize_backtest(
+                    equity_curve=empty,
+                    fills=empty,
+                    initial_capital=self.initial_capital,
+                    risk_free_rate_annual=self.risk_free_rate_annual,
+                ),
             )
 
         bars = candles.copy()
@@ -57,7 +66,10 @@ class BacktestEngine:
         chain = self._prep_chain(option_chain_df)
 
         cash = float(self.initial_capital)
-        position_qty = 0
+        positions: dict[str, int] = {}
+        avg_cost_by_instrument: dict[str, float] = {}
+        last_price_by_instrument: dict[str, float] = {}
+        realized_pnl_today = 0.0
         fill_rows: list[dict] = []
         equity_rows: list[dict] = []
         regime_rows: list[dict] = []
@@ -66,11 +78,17 @@ class BacktestEngine:
         for i in range(len(bars)):
             row = bars.iloc[i]
             ts = pd.Timestamp(row["timestamp"]).to_pydatetime()
+            open_price = float(row["open"])
             close_price = float(row["close"])
-            candles_hist = bars.iloc[: i + 1]
-            vix_hist = vix.loc[vix["timestamp"] <= pd.Timestamp(ts)] if not vix.empty else pd.DataFrame()
-            fii_hist = fii.loc[fii["date"] <= pd.Timestamp(ts)] if not fii.empty else pd.DataFrame()
-            chain_asof = self._latest_chain_asof(chain, ts)
+            candles_hist = bars.iloc[:i]
+            vix_hist = vix.loc[vix["timestamp"] < pd.Timestamp(ts)] if not vix.empty else pd.DataFrame()
+            fii_hist = fii.loc[fii["date"] < pd.Timestamp(ts)] if not fii.empty else pd.DataFrame()
+            chain_asof = self._latest_chain_asof(chain, ts, strict=True)
+            mark_prices = self._build_mark_price_map(
+                chain_asof=chain_asof,
+                default_underlying_price=close_price,
+                underlying_symbol=str(self.strategy.config.get("instrument", "UNDERLYING")),
+            )
 
             vix_series = vix_hist["close"].astype("float64") if not vix_hist.empty else None
             vix_value = float(vix_series.iloc[-1]) if vix_series is not None and not vix_series.empty else 0.0
@@ -99,20 +117,73 @@ class BacktestEngine:
             )
             previous_regime = regime
 
-            if signal is not None and signal.is_actionable:
-                fills = self.simulator.simulate(signal, close_price=close_price, timestamp=ts)
+            fill_reference_price = open_price if self.fill_on == "open" else close_price
+            can_trade = self.circuit_breaker.can_trade() if self.circuit_breaker is not None else True
+            if signal is not None and signal.is_actionable and can_trade:
+                if signal.signal_type == SignalType.EXIT and not signal.orders:
+                    net_qty = int(positions.get(signal.instrument, 0))
+                    signal.orders = [
+                        {
+                            "symbol": signal.instrument,
+                            "action": "BUY" if net_qty < 0 else "SELL",
+                            "quantity": abs(net_qty) if net_qty != 0 else 1,
+                        }
+                    ]
+                fills = self.simulator.simulate(
+                    signal,
+                    close_price=fill_reference_price,
+                    timestamp=ts,
+                    price_lookup=mark_prices,
+                )
                 for fill in fills:
-                    notional = fill["price"] * fill["quantity"]
-                    if fill["side"] == "BUY":
-                        cash -= notional + fill["fees"]
-                        position_qty += int(fill["quantity"])
+                    instrument = str(fill["instrument"])
+                    qty = int(fill["quantity"])
+                    side = str(fill["side"]).upper()
+                    fill_price = float(fill["price"])
+                    fees = float(fill["fees"])
+                    realized_delta = self._update_position_and_realized_pnl(
+                        positions=positions,
+                        avg_cost_by_instrument=avg_cost_by_instrument,
+                        instrument=instrument,
+                        side=side,
+                        quantity=qty,
+                        fill_price=fill_price,
+                    )
+                    realized_pnl_today += realized_delta - fees
+
+                    notional = float(fill.get("notional", fill["price"] * qty))
+                    if side == "BUY":
+                        cash -= notional + fees
                     else:
-                        cash += notional - fill["fees"]
-                        position_qty -= int(fill["quantity"])
+                        cash += notional - fees
+
+                    last_price_by_instrument[instrument] = fill_price
                     fill_rows.append(fill)
 
-            equity = cash + (position_qty * close_price)
-            equity_rows.append({"timestamp": ts, "cash": cash, "position_qty": position_qty, "equity": equity})
+            equity = self._mark_to_market(
+                cash=cash,
+                positions=positions,
+                mark_prices=mark_prices,
+                fallback_prices=last_price_by_instrument,
+                default_underlying_price=close_price,
+            )
+            open_positions = sum(1 for _, qty in positions.items() if qty != 0)
+            equity_rows.append({"timestamp": ts, "cash": cash, "open_positions": open_positions, "equity": equity})
+
+            if self.circuit_breaker is not None:
+                unrealized_pnl = self._compute_unrealized_pnl(
+                    positions=positions,
+                    avg_cost_by_instrument=avg_cost_by_instrument,
+                    mark_prices=mark_prices,
+                    fallback_prices=last_price_by_instrument,
+                    default_underlying_price=close_price,
+                )
+                self.circuit_breaker.update(
+                    current_equity=equity,
+                    realized_pnl_today=realized_pnl_today,
+                    unrealized_pnl=unrealized_pnl,
+                    open_positions=open_positions,
+                )
 
         fills_df = pd.DataFrame(fill_rows)
         equity_df = pd.DataFrame(equity_rows)
@@ -122,6 +193,7 @@ class BacktestEngine:
             fills=fills_df,
             initial_capital=self.initial_capital,
             periods_per_year=self.periods_per_year,
+            risk_free_rate_annual=self.risk_free_rate_annual,
         )
         return BacktestResult(equity_curve=equity_df, fills=fills_df, regimes=regimes_df, metrics=metrics)
 
@@ -136,17 +208,20 @@ class BacktestEngine:
         option_chain: pd.DataFrame | None,
         underlying_price: float,
     ) -> Signal | None:
+        market_data = {
+            "timestamp": timestamp,
+            "candles": candles_hist,
+            "vix": vix_value,
+            "option_chain": option_chain,
+            "underlying_price": underlying_price,
+        }
+        if self.strategy.state.current_position is not None:
+            exit_signal = self.strategy.get_exit_conditions(market_data)
+            if exit_signal is not None and exit_signal.is_actionable:
+                return exit_signal
+
         if self.strategy.should_be_active(regime):
-            return self.strategy.generate_signal(
-                market_data={
-                    "timestamp": timestamp,
-                    "candles": candles_hist,
-                    "vix": vix_value,
-                    "option_chain": option_chain,
-                    "underlying_price": underlying_price,
-                },
-                regime=regime,
-            )
+            return self.strategy.generate_signal(market_data=market_data, regime=regime)
         return self.strategy.on_regime_change(previous_regime, regime)
 
     @staticmethod
@@ -187,13 +262,174 @@ class BacktestEngine:
         return out
 
     @staticmethod
-    def _latest_chain_asof(chain_df: pd.DataFrame, ts: datetime) -> pd.DataFrame | None:
+    def _latest_chain_asof(chain_df: pd.DataFrame, ts: datetime, *, strict: bool = False) -> pd.DataFrame | None:
         if chain_df.empty:
             return None
         cutoff = pd.Timestamp(ts)
-        eligible = chain_df.loc[chain_df["timestamp"] <= cutoff]
+        if strict:
+            eligible = chain_df.loc[chain_df["timestamp"] < cutoff]
+        else:
+            eligible = chain_df.loc[chain_df["timestamp"] <= cutoff]
         if eligible.empty:
             return None
         latest_ts = eligible["timestamp"].max()
         snap = eligible.loc[eligible["timestamp"] == latest_ts].copy()
         return snap.reset_index(drop=True)
+
+    @staticmethod
+    def _build_mark_price_map(
+        *,
+        chain_asof: pd.DataFrame | None,
+        default_underlying_price: float,
+        underlying_symbol: str,
+    ) -> dict[str, float]:
+        prices: dict[str, float] = {
+            "UNDERLYING": float(default_underlying_price),
+            str(underlying_symbol): float(default_underlying_price),
+        }
+        if chain_asof is None or chain_asof.empty:
+            return prices
+
+        symbol_col = "symbol" if "symbol" in chain_asof.columns else "tradingsymbol" if "tradingsymbol" in chain_asof.columns else None
+        if symbol_col is None:
+            return prices
+
+        price_col = None
+        for candidate in ("ltp", "last_price", "close", "price"):
+            if candidate in chain_asof.columns:
+                price_col = candidate
+                break
+        if price_col is None:
+            return prices
+
+        for _, row in chain_asof.iterrows():
+            symbol = str(row.get(symbol_col, "")).strip()
+            if not symbol:
+                continue
+            price = pd.to_numeric(row.get(price_col), errors="coerce")
+            if pd.isna(price):
+                continue
+            prices[symbol] = float(price)
+        return prices
+
+    @staticmethod
+    def _mark_to_market(
+        *,
+        cash: float,
+        positions: dict[str, int],
+        mark_prices: dict[str, float],
+        fallback_prices: dict[str, float],
+        default_underlying_price: float,
+    ) -> float:
+        total = float(cash)
+        for instrument, qty in positions.items():
+            if qty == 0:
+                continue
+            price = mark_prices.get(instrument)
+            if price is None:
+                price = fallback_prices.get(instrument, default_underlying_price)
+            total += float(qty) * float(price)
+        return total
+
+    @staticmethod
+    def _resolve_mark_price(
+        *,
+        instrument: str,
+        mark_prices: dict[str, float],
+        fallback_prices: dict[str, float],
+        default_underlying_price: float,
+    ) -> float:
+        price = mark_prices.get(instrument)
+        if price is None:
+            price = fallback_prices.get(instrument, default_underlying_price)
+        return float(price)
+
+    @classmethod
+    def _compute_unrealized_pnl(
+        cls,
+        *,
+        positions: dict[str, int],
+        avg_cost_by_instrument: dict[str, float],
+        mark_prices: dict[str, float],
+        fallback_prices: dict[str, float],
+        default_underlying_price: float,
+    ) -> float:
+        unrealized = 0.0
+        for instrument, qty in positions.items():
+            if qty == 0:
+                continue
+            avg_cost = float(avg_cost_by_instrument.get(instrument, 0.0))
+            mark = cls._resolve_mark_price(
+                instrument=instrument,
+                mark_prices=mark_prices,
+                fallback_prices=fallback_prices,
+                default_underlying_price=default_underlying_price,
+            )
+            if qty > 0:
+                unrealized += (mark - avg_cost) * qty
+            else:
+                unrealized += (avg_cost - mark) * abs(qty)
+        return float(unrealized)
+
+    @staticmethod
+    def _update_position_and_realized_pnl(
+        *,
+        positions: dict[str, int],
+        avg_cost_by_instrument: dict[str, float],
+        instrument: str,
+        side: str,
+        quantity: int,
+        fill_price: float,
+    ) -> float:
+        realized = 0.0
+        qty_change = quantity if side == "BUY" else -quantity
+        current_qty = int(positions.get(instrument, 0))
+        current_avg = float(avg_cost_by_instrument.get(instrument, 0.0))
+
+        if current_qty == 0 or (current_qty > 0 and qty_change > 0) or (current_qty < 0 and qty_change < 0):
+            new_qty = current_qty + qty_change
+            if new_qty == 0:
+                positions[instrument] = 0
+                avg_cost_by_instrument.pop(instrument, None)
+                return 0.0
+
+            total_qty = abs(current_qty) + abs(qty_change)
+            if total_qty > 0:
+                new_avg = ((abs(current_qty) * current_avg) + (abs(qty_change) * fill_price)) / total_qty
+                positions[instrument] = new_qty
+                avg_cost_by_instrument[instrument] = float(new_avg)
+            return 0.0
+
+        if current_qty > 0 and qty_change < 0:
+            closing_qty = min(current_qty, abs(qty_change))
+            realized += (fill_price - current_avg) * closing_qty
+            remaining = current_qty - closing_qty
+            new_short = abs(qty_change) - closing_qty
+            if remaining > 0:
+                positions[instrument] = remaining
+                avg_cost_by_instrument[instrument] = current_avg
+            elif new_short > 0:
+                positions[instrument] = -new_short
+                avg_cost_by_instrument[instrument] = fill_price
+            else:
+                positions[instrument] = 0
+                avg_cost_by_instrument.pop(instrument, None)
+            return float(realized)
+
+        if current_qty < 0 and qty_change > 0:
+            closing_qty = min(abs(current_qty), qty_change)
+            realized += (current_avg - fill_price) * closing_qty
+            remaining_short = abs(current_qty) - closing_qty
+            new_long = qty_change - closing_qty
+            if remaining_short > 0:
+                positions[instrument] = -remaining_short
+                avg_cost_by_instrument[instrument] = current_avg
+            elif new_long > 0:
+                positions[instrument] = new_long
+                avg_cost_by_instrument[instrument] = fill_price
+            else:
+                positions[instrument] = 0
+                avg_cost_by_instrument.pop(instrument, None)
+            return float(realized)
+
+        return 0.0

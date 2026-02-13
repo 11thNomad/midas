@@ -14,7 +14,6 @@ from src.data.contracts import (
 from src.data.feed import CandleRequest, DataFeed
 from src.data.fii import FiiDownloadError, NseFiiClient, fetch_fii_dii, load_or_fetch_fii_dii
 from src.data.free_feed import DataFeedError, DataUnavailableError, FreeFeed
-from src.data.kite_feed import KiteFeed
 from src.data.quality import (
     CandleQualityReport,
     CandleQualityThresholds,
@@ -26,6 +25,11 @@ from src.data.quality import (
 )
 from src.data.store import DataStore
 from src.data.truedata_feed import TrueDataFeed
+
+try:
+    from src.data.kite_feed import KiteFeed
+except Exception:  # pragma: no cover - optional dependency path
+    KiteFeed = None  # type: ignore[assignment]
 
 __all__ = [
     "CandleRequest",
@@ -43,7 +47,6 @@ __all__ = [
     "QualityGateResult",
     "DataStore",
     "FreeFeed",
-    "KiteFeed",
     "TrueDataFeed",
     "assess_candle_quality",
     "fetch_fii_dii",
@@ -57,3 +60,6 @@ __all__ = [
     "fii_dtos_from_frame",
     "frame_from_fii_dtos",
 ]
+
+if KiteFeed is not None:
+    __all__.append("KiteFeed")

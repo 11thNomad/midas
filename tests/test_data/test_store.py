@@ -58,3 +58,15 @@ def test_upsert_deduplicates_and_reports_net_new_rows(tmp_path):
     assert len(loaded) == 3
     # 2026-01-03 should have been replaced by value=3 from second write
     assert loaded.loc[loaded["timestamp"] == pd.Timestamp("2026-01-03"), "value"].iloc[0] == 3
+
+
+def test_count_rows_reads_parquet_metadata(tmp_path):
+    store = DataStore(base_dir=str(tmp_path / "cache"))
+    directory = store._dataset_dir("row_count_test")
+    pd.DataFrame({"timestamp": pd.to_datetime(["2026-01-01", "2026-01-02"]), "v": [1, 2]}).to_parquet(
+        directory / "2026.parquet", index=False
+    )
+    pd.DataFrame({"timestamp": pd.to_datetime(["2027-01-01"]), "v": [3]}).to_parquet(
+        directory / "2027.parquet", index=False
+    )
+    assert store._count_rows(directory) == 3

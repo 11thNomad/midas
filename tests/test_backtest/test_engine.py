@@ -130,5 +130,162 @@ def test_engine_passes_latest_option_chain_snapshot_to_strategy():
         initial_capital=1000.0,
     )
     engine.run(candles=candles, option_chain_df=chain)
-    assert strategy.captured_lengths[0] == 2
+    assert strategy.captured_lengths[0] == 0
     assert strategy.captured_lengths[-1] == 2
+
+
+def test_engine_avoids_lookahead_in_candle_history():
+    candles = pd.DataFrame(
+        {
+            "timestamp": pd.date_range("2026-01-01", periods=4, freq="D"),
+            "open": [100, 101, 102, 103],
+            "high": [101, 102, 103, 104],
+            "low": [99, 100, 101, 102],
+            "close": [100, 101, 102, 103],
+        }
+    )
+
+    class HistoryLengthStrategy(BaseStrategy):
+        def __init__(self, name: str, config: dict):
+            super().__init__(name, config)
+            self.lengths: list[int] = []
+
+        def generate_signal(self, market_data: dict, regime: RegimeState) -> Signal:
+            self.lengths.append(len(market_data["candles"]))
+            return Signal(
+                signal_type=SignalType.NO_SIGNAL,
+                strategy_name=self.name,
+                instrument=self.config.get("instrument", "NIFTY"),
+                timestamp=market_data["timestamp"],
+                regime=regime,
+            )
+
+        def get_exit_conditions(self, market_data: dict) -> Signal | None:
+            return None
+
+        def compute_position_size(self, capital: float, risk_per_trade: float) -> int:
+            return 1
+
+    strategy = HistoryLengthStrategy(
+        name="history_len",
+        config={"instrument": "NIFTY", "active_regimes": [RegimeState.LOW_VOL_RANGING.value]},
+    )
+    engine = BacktestEngine(
+        classifier=RegimeClassifier(thresholds=RegimeThresholds()),
+        strategy=strategy,
+        simulator=FillSimulator(slippage_pct=0.0, commission_per_order=0.0),
+        initial_capital=1000.0,
+    )
+    engine.run(candles=candles)
+    assert strategy.lengths[0] == 0
+    assert strategy.lengths[1] == 1
+
+
+def test_engine_passes_realized_and_unrealized_pnl_to_breaker():
+    candles = pd.DataFrame(
+        {
+            "timestamp": pd.date_range("2026-01-01", periods=3, freq="D"),
+            "open": [100, 101, 102],
+            "high": [101, 102, 103],
+            "low": [99, 100, 101],
+            "close": [100, 101, 102],
+        }
+    )
+    strategy = OneShotStrategy(
+        name="oneshot",
+        config={"instrument": "NIFTY", "active_regimes": [RegimeState.LOW_VOL_RANGING.value], "exit_ts": datetime(2026, 1, 3)},
+    )
+
+    class CaptureBreaker:
+        def __init__(self):
+            self.updates: list[dict] = []
+
+        def can_trade(self) -> bool:
+            return True
+
+        def update(self, **kwargs):
+            self.updates.append(kwargs)
+
+    breaker = CaptureBreaker()
+    engine = BacktestEngine(
+        classifier=RegimeClassifier(thresholds=RegimeThresholds()),
+        strategy=strategy,
+        simulator=FillSimulator(
+            slippage_pct=0.0,
+            commission_per_order=0.0,
+            stt_pct=0.0,
+            exchange_txn_charges_pct=0.0,
+            gst_pct=0.0,
+            sebi_fee_pct=0.0,
+            stamp_duty_pct=0.0,
+        ),
+        initial_capital=1000.0,
+        circuit_breaker=breaker,  # type: ignore[arg-type]
+    )
+    engine.run(candles=candles)
+
+    assert breaker.updates
+    final = breaker.updates[-1]
+    assert final["realized_pnl_today"] == 2.0
+    assert final["unrealized_pnl"] == 0.0
+
+
+def test_engine_infers_buy_for_exit_without_orders_when_short():
+    candles = pd.DataFrame(
+        {
+            "timestamp": pd.date_range("2026-01-01", periods=3, freq="D"),
+            "open": [100, 100, 100],
+            "high": [100, 100, 100],
+            "low": [100, 100, 100],
+            "close": [100, 100, 100],
+        }
+    )
+
+    class ShortThenExitStrategy(BaseStrategy):
+        def generate_signal(self, market_data: dict, regime: RegimeState) -> Signal:
+            ts = market_data["timestamp"]
+            if self.state.current_position is None:
+                self.state.current_position = {"qty": -1}
+                return Signal(
+                    signal_type=SignalType.ENTRY_SHORT,
+                    strategy_name=self.name,
+                    instrument="NIFTY",
+                    timestamp=ts,
+                    regime=regime,
+                )
+            if ts == datetime(2026, 1, 3):
+                self.state.current_position = None
+                return Signal(
+                    signal_type=SignalType.EXIT,
+                    strategy_name=self.name,
+                    instrument="NIFTY",
+                    timestamp=ts,
+                    regime=regime,
+                )
+            return Signal(
+                signal_type=SignalType.NO_SIGNAL,
+                strategy_name=self.name,
+                instrument="NIFTY",
+                timestamp=ts,
+                regime=regime,
+            )
+
+        def get_exit_conditions(self, market_data: dict) -> Signal | None:
+            return None
+
+        def compute_position_size(self, capital: float, risk_per_trade: float) -> int:
+            return 1
+
+    strategy = ShortThenExitStrategy(
+        name="short_then_exit",
+        config={"instrument": "NIFTY", "active_regimes": [RegimeState.LOW_VOL_RANGING.value]},
+    )
+    engine = BacktestEngine(
+        classifier=RegimeClassifier(thresholds=RegimeThresholds()),
+        strategy=strategy,
+        simulator=FillSimulator(slippage_pct=0.0, commission_per_order=0.0),
+        initial_capital=1000.0,
+    )
+    result = engine.run(candles=candles)
+    sides = result.fills["side"].tolist()
+    assert sides == ["SELL", "BUY"]

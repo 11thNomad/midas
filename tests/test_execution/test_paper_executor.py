@@ -43,3 +43,48 @@ def test_paper_executor_skips_no_signal(tmp_path):
     ]
     fills = engine.execute_signals(signals, market_data={"symbol": "NIFTY"})
     assert fills == []
+
+
+def test_paper_executor_infers_buy_to_cover_for_short_exit(tmp_path):
+    engine = PaperExecutionEngine(base_dir=str(tmp_path / "cache"), slippage_bps=0.0, commission_per_order=0.0)
+    entry = Signal(
+        signal_type=SignalType.ENTRY_SHORT,
+        strategy_name="dummy",
+        instrument="NIFTY",
+        timestamp=datetime(2026, 1, 2, 9, 15),
+        regime=RegimeState.LOW_VOL_RANGING,
+    )
+    exit_signal = Signal(
+        signal_type=SignalType.EXIT,
+        strategy_name="dummy",
+        instrument="NIFTY",
+        timestamp=datetime(2026, 1, 2, 9, 30),
+        regime=RegimeState.LOW_VOL_RANGING,
+    )
+    entry_fills = engine.execute_signals([entry], market_data={"symbol": "NIFTY", "last_price": 100.0})
+    exit_fills = engine.execute_signals([exit_signal], market_data={"symbol": "NIFTY", "last_price": 95.0})
+    assert entry_fills[0]["side"] == "SELL"
+    assert exit_fills[0]["side"] == "BUY"
+
+
+def test_paper_executor_infers_exit_quantity_from_open_position(tmp_path):
+    engine = PaperExecutionEngine(base_dir=str(tmp_path / "cache"), slippage_bps=0.0, commission_per_order=0.0)
+    entry = Signal(
+        signal_type=SignalType.ENTRY_LONG,
+        strategy_name="dummy",
+        instrument="NIFTY",
+        timestamp=datetime(2026, 1, 2, 9, 15),
+        orders=[{"symbol": "NIFTY", "action": "BUY", "quantity": 2, "price": 100.0}],
+        regime=RegimeState.LOW_VOL_RANGING,
+    )
+    exit_signal = Signal(
+        signal_type=SignalType.EXIT,
+        strategy_name="dummy",
+        instrument="NIFTY",
+        timestamp=datetime(2026, 1, 2, 9, 45),
+        regime=RegimeState.LOW_VOL_RANGING,
+    )
+    engine.execute_signals([entry], market_data={"symbol": "NIFTY", "last_price": 100.0})
+    exit_fills = engine.execute_signals([exit_signal], market_data={"symbol": "NIFTY", "last_price": 105.0})
+    assert exit_fills[0]["side"] == "SELL"
+    assert exit_fills[0]["quantity"] == 2

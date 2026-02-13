@@ -17,6 +17,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+import pandas as pd
+
 from src.strategies.base import RegimeState
 
 logger = structlog.get_logger()
@@ -121,6 +123,19 @@ class RegimeClassifier:
         Returns the new regime state. If regime changed, logs the transition.
         """
         self.previous_regime = self.current_regime
+
+        if pd.isna(signals.india_vix) or pd.isna(signals.adx_14):
+            logger.error(
+                "Invalid regime signals: NaN detected",
+                india_vix=signals.india_vix,
+                adx_14=signals.adx_14,
+            )
+            new_regime = RegimeState.UNKNOWN
+            if new_regime != self.current_regime:
+                self._on_regime_change(new_regime, signals)
+            self.current_regime = new_regime
+            self.snapshots.append(self.snapshot(signals=signals, regime=new_regime))
+            return new_regime
 
         # Base classification: VIX x ADX matrix with hysteresis + smoothing.
         adx_for_state = self._smooth_adx(signals.adx_14)

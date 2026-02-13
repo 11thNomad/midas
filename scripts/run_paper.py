@@ -1,4 +1,4 @@
-"""Paper loop scaffold that exercises regime/runtime/strategy routing without order execution.
+"""Paper loop scaffold that exercises regime/runtime/strategy routing with paper execution.
 
 Examples:
   python scripts/run_paper.py --symbol NIFTY --timeframe 5m --iterations 1
@@ -8,8 +8,10 @@ Examples:
 from __future__ import annotations
 
 import argparse
+import signal
 import sys
 import time
+import traceback
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -23,6 +25,7 @@ sys.path.insert(0, str(REPO_ROOT))
 from src.data.free_feed import DataUnavailableError, FreeFeed
 from src.data.store import DataStore
 from src.execution import PaperExecutionEngine
+from src.risk.circuit_breaker import CircuitBreaker
 from src.regime import (
     RegimeClassifier,
     RegimeRuntime,
@@ -31,7 +34,10 @@ from src.regime import (
     StrategyTransitionStore,
 )
 from src.signals.regime import build_regime_signals
+from src.strategies.iron_condor import IronCondorStrategy
+from src.strategies.momentum import MomentumStrategy
 from src.strategies.base import BaseStrategy, RegimeState, Signal, SignalType
+from src.strategies.regime_probe import RegimeProbeStrategy
 from src.strategies.router import StrategyRouter
 
 
@@ -60,7 +66,7 @@ class NoOpStrategy(BaseStrategy):
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run paper-loop scaffold (no order execution).")
+    parser = argparse.ArgumentParser(description="Run paper-loop scaffold (paper execution mode).")
     parser.add_argument("--symbol", default="NIFTY", help="Underlying symbol")
     parser.add_argument("--timeframe", default="5m", help="Candle timeframe (e.g., 5m, 1d)")
     parser.add_argument("--iterations", type=int, default=1, help="Number of loop iterations")
@@ -83,7 +89,14 @@ def build_strategies(settings: dict) -> list[BaseStrategy]:
     for name, cfg in strategies_cfg.items():
         if not cfg.get("enabled", False):
             continue
-        strategies.append(NoOpStrategy(name=name, config=cfg))
+        if name == "momentum":
+            strategies.append(MomentumStrategy(name=name, config=cfg))
+        elif name == "iron_condor":
+            strategies.append(IronCondorStrategy(name=name, config=cfg))
+        elif name == "regime_probe":
+            strategies.append(RegimeProbeStrategy(name=name, config=cfg))
+        else:
+            strategies.append(NoOpStrategy(name=name, config=cfg))
     return strategies
 
 
@@ -169,21 +182,40 @@ def main() -> int:
         symbol=args.symbol,
     )
     backtest_cfg = settings.get("backtest", {})
+    risk_cfg = settings.get("risk", {})
     slippage_pct = float(backtest_cfg.get("slippage_pct", 0.05) or 0.05)
+    breaker = CircuitBreaker(
+        initial_capital=500_000.0,
+        max_daily_loss_pct=float(risk_cfg.get("max_daily_loss_pct", 3.0) or 3.0),
+        max_drawdown_pct=float(risk_cfg.get("max_drawdown_pct", 15.0) or 15.0),
+        max_open_positions=int(risk_cfg.get("max_open_positions", 4) or 4),
+    )
     executor = PaperExecutionEngine(
         base_dir=str(cache_dir),
         slippage_bps=slippage_pct * 100.0,
         commission_per_order=float(backtest_cfg.get("commission_per_order", 20.0) or 20.0),
+        circuit_breaker=breaker,
     )
+    stop_requested = False
+
+    def _request_stop(signum, _frame):
+        nonlocal stop_requested
+        stop_requested = True
+        print(f"\nReceived signal {signum}; shutting down gracefully after current iteration.")
+
+    signal.signal(signal.SIGINT, _request_stop)
+    signal.signal(signal.SIGTERM, _request_stop)
 
     print("=" * 72)
-    print("NiftyQuant Paper Loop (No Execution)")
+    print("NiftyQuant Paper Loop (Paper Execution)")
     print("=" * 72)
     print(f"symbol={args.symbol} timeframe={args.timeframe} iterations={args.iterations}")
     print(f"cache_dir={cache_dir}")
     print(f"enabled_strategies={[s.name for s in router.strategies]}")
 
     for i in range(args.iterations):
+        if stop_requested:
+            break
         loop_ts = datetime.now(UTC).replace(tzinfo=None)
         try:
             candles = _load_or_fetch_candles(
@@ -226,7 +258,12 @@ def main() -> int:
             all_signals = transition_signals + strategy_signals
             fills = executor.execute_signals(
                 all_signals,
-                market_data={"timestamp": loop_ts, "vix": vix_value, "symbol": args.symbol},
+                market_data={
+                    "timestamp": loop_ts,
+                    "vix": vix_value,
+                    "symbol": args.symbol,
+                    "close_price": float(candles["close"].iloc[-1]),
+                },
             )
 
             print(
@@ -239,6 +276,8 @@ def main() -> int:
             print(f"[{i + 1}/{args.iterations}] data unavailable: {exc}")
         except Exception as exc:
             print(f"[{i + 1}/{args.iterations}] error: {exc}")
+            traceback.print_exc()
+            break
 
         if i < args.iterations - 1:
             time.sleep(args.sleep_seconds)

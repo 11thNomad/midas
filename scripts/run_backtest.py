@@ -24,6 +24,7 @@ from src.backtest import (
 )
 from src.data.store import DataStore
 from src.regime.classifier import RegimeClassifier, RegimeThresholds
+from src.risk.circuit_breaker import CircuitBreaker
 from src.strategies.iron_condor import IronCondorStrategy
 from src.strategies.momentum import MomentumStrategy
 from src.strategies.regime_probe import RegimeProbeStrategy
@@ -129,9 +130,15 @@ def main() -> int:
     simulator = FillSimulator(
         slippage_pct=float(backtest_cfg.get("slippage_pct", 0.05) or 0.05),
         commission_per_order=float(backtest_cfg.get("commission_per_order", 20.0) or 20.0),
+        stt_pct=float(backtest_cfg.get("stt_pct", 0.0125) or 0.0125),
+        exchange_txn_charges_pct=float(backtest_cfg.get("exchange_txn_charges_pct", 0.053) or 0.053),
+        gst_pct=float(backtest_cfg.get("gst_pct", 18.0) or 18.0),
+        sebi_fee_pct=float(backtest_cfg.get("sebi_fee_pct", 0.0001) or 0.0001),
+        stamp_duty_pct=float(backtest_cfg.get("stamp_duty_pct", 0.003) or 0.003),
     )
     output_dir = str(REPO_ROOT / args.output_dir)
     periods_per_year = 252 if args.timeframe == "1d" else 252 * 75
+    risk_free_rate_annual = float(backtest_cfg.get("risk_free_rate_annual", 0.07) or 0.07)
 
     print("=" * 72)
     print("Backtest Run")
@@ -165,6 +172,13 @@ def main() -> int:
                     simulator=simulator,
                     initial_capital=initial_capital,
                     periods_per_year=periods_per_year,
+                    risk_free_rate_annual=risk_free_rate_annual,
+                    circuit_breaker=CircuitBreaker(
+                        initial_capital=initial_capital,
+                        max_daily_loss_pct=float(settings.get("risk", {}).get("max_daily_loss_pct", 3.0) or 3.0),
+                        max_drawdown_pct=float(settings.get("risk", {}).get("max_drawdown_pct", 15.0) or 15.0),
+                        max_open_positions=int(settings.get("risk", {}).get("max_open_positions", 4) or 4),
+                    ),
                 )
                 test_candles = candles.loc[
                     (candles["timestamp"] >= pd.Timestamp(w.test_start))
@@ -227,6 +241,13 @@ def main() -> int:
                 simulator=simulator,
                 initial_capital=initial_capital,
                 periods_per_year=periods_per_year,
+                risk_free_rate_annual=risk_free_rate_annual,
+                circuit_breaker=CircuitBreaker(
+                    initial_capital=initial_capital,
+                    max_daily_loss_pct=float(settings.get("risk", {}).get("max_daily_loss_pct", 3.0) or 3.0),
+                    max_drawdown_pct=float(settings.get("risk", {}).get("max_drawdown_pct", 15.0) or 15.0),
+                    max_open_positions=int(settings.get("risk", {}).get("max_open_positions", 4) or 4),
+                ),
             )
             result = engine.run(candles=candles, vix_df=vix, fii_df=fii, option_chain_df=option_chain)
 

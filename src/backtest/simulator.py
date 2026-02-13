@@ -15,8 +15,20 @@ class FillSimulator:
 
     slippage_pct: float = 0.05  # percent per side (0.05 means 0.05%)
     commission_per_order: float = 20.0
+    stt_pct: float = 0.0125
+    exchange_txn_charges_pct: float = 0.053
+    gst_pct: float = 18.0
+    sebi_fee_pct: float = 0.0001
+    stamp_duty_pct: float = 0.003
 
-    def simulate(self, signal: Signal, *, close_price: float, timestamp: datetime) -> list[dict[str, Any]]:
+    def simulate(
+        self,
+        signal: Signal,
+        *,
+        close_price: float,
+        timestamp: datetime,
+        price_lookup: dict[str, float] | None = None,
+    ) -> list[dict[str, Any]]:
         if not signal.is_actionable:
             return []
 
@@ -25,9 +37,12 @@ class FillSimulator:
         for order in orders:
             side = str(order.get("action", self._default_action(signal))).upper()
             qty = int(order.get("quantity", 1) or 1)
-            raw_price = float(order.get("price", close_price) or close_price)
+            raw_price = self._resolve_raw_price(order=order, default_price=close_price, price_lookup=price_lookup)
             slip = raw_price * (self.slippage_pct / 100.0)
             price = raw_price + slip if side == "BUY" else max(0.0, raw_price - slip)
+            notional = abs(price * qty)
+            fee_parts = self._compute_fees(side=side, notional=notional)
+            total_fees = float(sum(fee_parts.values()))
 
             fills.append(
                 {
@@ -38,7 +53,9 @@ class FillSimulator:
                     "side": side,
                     "quantity": qty,
                     "price": float(price),
-                    "fees": float(self.commission_per_order),
+                    "notional": float(notional),
+                    "fees": total_fees,
+                    **fee_parts,
                     "regime": signal.regime.value,
                     "reason": signal.reason,
                 }
@@ -52,3 +69,35 @@ class FillSimulator:
         if signal.signal_type == SignalType.EXIT:
             return "SELL"
         return "BUY"
+
+    def _compute_fees(self, *, side: str, notional: float) -> dict[str, float]:
+        brokerage = float(self.commission_per_order)
+        exchange = notional * (self.exchange_txn_charges_pct / 100.0)
+        stt = notional * (self.stt_pct / 100.0) if side == "SELL" else 0.0
+        sebi = notional * (self.sebi_fee_pct / 100.0)
+        stamp = notional * (self.stamp_duty_pct / 100.0) if side == "BUY" else 0.0
+        gst = (brokerage + exchange) * (self.gst_pct / 100.0)
+        return {
+            "brokerage": float(brokerage),
+            "exchange_charges": float(exchange),
+            "stt": float(stt),
+            "sebi_fee": float(sebi),
+            "stamp_duty": float(stamp),
+            "gst": float(gst),
+        }
+
+    @staticmethod
+    def _resolve_raw_price(
+        *,
+        order: dict[str, Any],
+        default_price: float,
+        price_lookup: dict[str, float] | None,
+    ) -> float:
+        if "price" in order and order["price"] is not None:
+            return float(order["price"])
+        if "ltp" in order and order["ltp"] is not None:
+            return float(order["ltp"])
+        symbol = str(order.get("symbol", "")).strip()
+        if symbol and price_lookup and symbol in price_lookup:
+            return float(price_lookup[symbol])
+        return float(default_price)

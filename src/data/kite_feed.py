@@ -4,10 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Iterable
+from typing import Any, Iterable
 
 import pandas as pd
-from kiteconnect import KiteConnect
 
 from src.data.contracts import candle_dtos_from_frame, frame_from_candle_dtos, option_dtos_from_chain
 from src.data.feed import DataFeed
@@ -25,7 +24,7 @@ class KiteFeed(DataFeed):
     api_key: str
     access_token: str
     name: str = "kite"
-    _kite: KiteConnect = field(init=False, repr=False)
+    _kite: Any = field(init=False, repr=False)
     _instruments: list[dict] | None = field(default=None, init=False, repr=False)
 
     _INTERVAL_MAP = {
@@ -59,6 +58,12 @@ class KiteFeed(DataFeed):
     }
 
     def __post_init__(self):
+        try:
+            from kiteconnect import KiteConnect
+        except ImportError as exc:
+            raise KiteFeedError(
+                "kiteconnect is not installed. Install with: pip install kiteconnect"
+            ) from exc
         self._kite = KiteConnect(api_key=self.api_key)
         self._kite.set_access_token(self.access_token)
 
