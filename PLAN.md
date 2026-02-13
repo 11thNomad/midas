@@ -52,7 +52,10 @@
 - [ ] Replace remaining `NoOpStrategy` usage in `scripts/run_paper.py` with explicit strategy classes or fail-fast config validation.
 - [x] Move paper/runtime and historical ingest paths to Kite-only provider wiring (`scripts/run_paper.py`, `scripts/download_historical.py`).
 - [x] Replace multi-provider health check with Kite-focused checks (auth/profile + quote smoke checks).
-- [ ] Remove legacy `src/data/free_feed.py` and `src/data/truedata_feed.py` modules after confirming no downstream imports.
+- [x] Remove legacy `src/data/free_feed.py` module and free-data dependencies.
+- [ ] Keep `src/data/truedata_feed.py` as optional standby feed; add integration hooks only when needed.
+- [x] Add cron-ready daily maintenance workflow (`scripts/daily_maintenance.py` + `config/cron/daily_maintenance.crontab.example`).
+- [ ] **Data-store TODO:** implement composite-key dedup for option-chain persistence (timestamp-only dedup is insufficient).
 - [ ] Add `paper_fills` daily P&L/reporting script (fills, fees, gross/net by day/strategy).
 - [ ] **Visual review step:** run replay notebook/report and manually verify regime labels vs chart context before strategy comparisons.
 
@@ -61,6 +64,7 @@
 - [x] Prove strict no-lookahead regime computation path for historical replay.
 - [x] Run an end-to-end dry replay path that logs regime transitions and supports sanity validation (`scripts/replay_regime.py`).
 - [ ] Replace placeholder option-chain inputs in paper runtime with live Kite chain snapshots.
+- [ ] Implement option-chain persistence with composite-key dedup (timestamp + expiry + strike + option_type) before historical chain backtests.
 - [ ] Add a Kite-backed paper-loop acceptance runbook (open, intraday, close checks).
 - [ ] Convert replay outputs into final notebook artifact for visual inspection (optional packaging task; not a code blocker).
 
@@ -72,7 +76,7 @@
 
 A personal, modular algorithmic trading system that:
 
-- Ingests market data from Kite Connect + NSE public datasets
+- Ingests market data from Kite Connect (primary), NSE public datasets, and optional TrueData standby adapters
 - Maintains a library of composable signals and indicators
 - Classifies market regimes to decide *when* to trade, not just *what* to trade
 - Backtests strategies with realistic cost modeling and walk-forward validation
@@ -219,6 +223,7 @@ pulls NSE companion datasets (VIX + FII/DII), and places a test order
 | Source        | Cost         | What it provides                            | Historical depth |
 |---------------|-------------|---------------------------------------------|-----------------|
 | Kite Connect  | Paid app     | Intraday/daily candles, live quotes, option chain snapshots | Broker-limited by endpoint |
+| TrueData      | Paid monthly | Optional secondary feed for data validation and extended coverage | Plan-dependent |
 | NSE website   | Free         | India VIX, FII/DII flows, reference datasets | Varies          |
 | NSE data shop | ₹10K+ once   | Full tick-by-tick, complete option history    | Comprehensive   |
 
@@ -1107,8 +1112,8 @@ Track major design decisions here as the project evolves.
 
 | Date | Decision | Rationale |
 |------|----------|-----------|
-| 2026-02-13 | Standardize on Kite-only market data | Single paid provider reduces divergence between paper/live and simplifies operations |
-| _start_ | Use TrueData + Kite Connect | Original multi-provider plan; now superseded by Kite-only decision above |
+| 2026-02-13 | Standardize on Kite as primary feed, retain TrueData adapter as optional standby | Keep operational simplicity while preserving a paid secondary path for future validation/expansion |
+| _start_ | Use TrueData + Kite Connect | Original multi-provider plan |
 | _start_ | Parquet for local storage | Fast columnar reads for backtesting, better than CSV or SQLite for time series |
 | _start_ | Regime-based strategy routing | Core thesis: knowing when NOT to trade is the real edge |
 | _start_ | Walk-forward validation required | Prevents overfitting; any strategy that only works in-sample is rejected |

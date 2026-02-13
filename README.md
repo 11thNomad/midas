@@ -19,7 +19,7 @@ A modular algorithmic trading system for Indian markets (NSE), focused on Nifty 
                │                      │
 ┌──────────────▼──────────────────────▼───────────────────┐
 │                    DATA LAYER                            │
-│         Kite Connect + NSE companion datasets            │
+│ Kite Connect (primary) + NSE datasets + TrueData (optional standby) │
 └──────────────┬──────────────────────────────────────────┘
                │
 ┌──────────────▼──────────────────────────────────────────┐
@@ -52,6 +52,7 @@ nifty-quant/
 │   │   ├── __init__.py
 │   │   ├── kite_feed.py      # Kite API wrapper (historical + live snapshots)
 │   │   ├── fii.py            # NSE FII/DII data pipeline
+│   │   ├── truedata_feed.py  # Optional standby adapter (not on primary path)
 │   │   ├── store.py          # Local data storage (SQLite/Parquet)
 │   │   └── schemas.py        # Data models — Candle, OptionChain, Greeks
 │   │
@@ -122,6 +123,7 @@ nifty-quant/
 ### Prerequisites
 - Python 3.11+
 - Zerodha account with Kite Connect API access (execution)
+- TrueData account (optional, only if you want secondary-feed validation)
 
 ### Installation
 
@@ -160,6 +162,16 @@ python scripts/run_paper.py --symbol NIFTY --timeframe 5m --iterations 20 --slee
 
 # 6. Only after validating paper results — go live
 python scripts/run_live.py --strategy iron_condor --capital 200000
+```
+
+### Scheduling (Cron)
+
+```bash
+# Run ad-hoc daily workflow now
+python scripts/daily_maintenance.py --days 2 --symbols NIFTY,BANKNIFTY --timeframes 1d,5m
+
+# Install the sample crontab (edit repo path first if needed)
+crontab config/cron/daily_maintenance.crontab.example
 ```
 
 ## Design Principles

@@ -119,6 +119,31 @@ def check_kite(quick: bool = False) -> bool:
         return False
 
 
+def check_truedata_optional() -> bool:
+    """Optionally verify TrueData SDK wiring if credentials are present."""
+    print("\n=== TrueData (Optional) ===")
+    username = os.getenv("TRUEDATA_USERNAME", "").strip()
+    password = os.getenv("TRUEDATA_PASSWORD", "").strip()
+    if not username and not password:
+        print("  [~] Credentials not configured; optional check skipped")
+        return True
+    if not username or not password:
+        print("  [X] Partial TrueData credentials found; set both TRUEDATA_USERNAME and TRUEDATA_PASSWORD")
+        return False
+
+    try:
+        __import__("truedata_ws")
+    except ImportError:
+        print("  [~] truedata_ws is not installed (install vendor SDK if/when you enable TrueData fallback)")
+        return True
+    except Exception as exc:
+        print(f"  [X] TrueData SDK import failed: {exc}")
+        return False
+
+    print("  [OK] Credentials + SDK import look valid (login flow not executed in health check)")
+    return True
+
+
 def check_directories() -> bool:
     """Ensure required directories exist."""
     print("\n=== Directory Structure ===")
@@ -176,6 +201,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Skip Kite connectivity checks.",
     )
+    parser.add_argument(
+        "--check-truedata",
+        action="store_true",
+        help="Run optional TrueData credential/SDK check.",
+    )
     return parser.parse_args()
 
 
@@ -197,6 +227,8 @@ def main() -> None:
         results["kite"] = True
     else:
         results["kite"] = check_kite(quick=args.quick)
+    if args.check_truedata:
+        results["truedata_optional"] = check_truedata_optional()
 
     print("\n" + "=" * 55)
     print("  Summary")
@@ -205,7 +237,7 @@ def main() -> None:
         print(f"  {check_mark(ok)} {name}")
 
     dev_ready = results["env"] and results["deps"] and results["dirs"]
-    live_api_ready = results["kite"]
+    live_api_ready = results["kite"] and results.get("truedata_optional", True)
 
     if dev_ready and live_api_ready and not args.skip_broker_checks:
         print("\n  -> Ready for development and live API integration.")

@@ -256,6 +256,7 @@ def main() -> int:
             fii_net_3d = float(fii["fii_net"].tail(3).sum()) if not fii.empty and "fii_net" in fii.columns else 0.0
 
             # TODO: Replace None chain placeholders with true option-chain snapshots once feed integration is ready.
+            # TODO: Persisted option-chain snapshots require composite-key dedup in DataStore before enabling writes.
             regime_signals = build_regime_signals(
                 timestamp=loop_ts,
                 candles=candles,

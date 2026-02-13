@@ -29,6 +29,11 @@ try:
 except Exception:  # pragma: no cover - optional dependency path
     KiteFeed = None  # type: ignore[assignment]
 
+try:
+    from src.data.truedata_feed import TrueDataFeed
+except Exception:  # pragma: no cover - optional dependency path
+    TrueDataFeed = None  # type: ignore[assignment]
+
 __all__ = [
     "CandleRequest",
     "DataFeed",
@@ -57,3 +62,6 @@ __all__ = [
 
 if KiteFeed is not None:
     __all__.append("KiteFeed")
+
+if TrueDataFeed is not None:
+    __all__.append("TrueDataFeed")

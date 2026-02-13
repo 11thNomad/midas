@@ -95,6 +95,8 @@ class DataStore:
         Returns:
             Number of net-new rows added after deduplication/upsert.
         """
+        # TODO: Add dataset-specific dedup keys. Current upsert deduplicates only by timestamp,
+        # which is insufficient for option-chain rows (needs composite key like timestamp+expiry+strike+type).
         if df.empty:
             return 0
 
