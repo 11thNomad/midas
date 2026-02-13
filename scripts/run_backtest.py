@@ -1,8 +1,9 @@
-"""Run a Phase 4 scaffold backtest from cached parquet datasets."""
+"""Run backtest and walk-forward analysis from cached parquet datasets."""
 
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -16,9 +17,12 @@ sys.path.insert(0, str(REPO_ROOT))
 from src.backtest import (
     BacktestEngine,
     FillSimulator,
+    aggregate_cross_instrument_results,
     aggregate_walk_forward_metrics,
+    build_sensitivity_variants,
     generate_walk_forward_windows,
     regime_segmented_returns,
+    summarize_sensitivity_results,
     write_backtest_report,
     write_walkforward_report,
 )
@@ -29,6 +33,12 @@ from src.strategies.iron_condor import IronCondorStrategy
 from src.strategies.momentum import MomentumStrategy
 from src.strategies.regime_probe import RegimeProbeStrategy
 
+DEFAULT_SENSITIVITY_PARAMS = {
+    "iron_condor": ["call_delta", "put_delta", "wing_width", "profit_target_pct", "stop_loss_pct"],
+    "momentum": ["fast_ema", "slow_ema", "adx_filter", "atr_multiplier"],
+    "regime_probe": ["lots"],
+}
+
 
 def parse_date(value: str) -> datetime:
     return datetime.strptime(value, "%Y-%m-%d")
@@ -36,7 +46,12 @@ def parse_date(value: str) -> datetime:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run backtest scaffold from cached data.")
-    parser.add_argument("--symbol", default="NIFTY", help="Symbol partition")
+    parser.add_argument("--symbol", default="NIFTY", help="Primary symbol partition")
+    parser.add_argument(
+        "--symbols",
+        action="append",
+        help="Optional cross-instrument symbols; repeatable or comma-separated (e.g. NIFTY,BANKNIFTY)",
+    )
     parser.add_argument("--timeframe", default="1d", help="Candle timeframe partition")
     parser.add_argument("--from", dest="start", type=parse_date, help="Start date YYYY-MM-DD")
     parser.add_argument("--to", dest="end", type=parse_date, help="End date YYYY-MM-DD")
@@ -47,6 +62,7 @@ def parse_args() -> argparse.Namespace:
         help="Strategy id; repeatable or comma-separated (available: regime_probe, momentum, iron_condor)",
     )
     parser.add_argument("--walk-forward", action="store_true", help="Run walk-forward windows instead of single run")
+    parser.add_argument("--sensitivity", action="store_true", help="Run parameter sensitivity variants (default: from settings)")
     parser.add_argument("--settings", default="config/settings.yaml", help="Settings file path")
     parser.add_argument("--output-dir", default="data/reports", help="Report output directory")
     return parser.parse_args()
@@ -63,37 +79,357 @@ def resolve_strategies(values: list[str] | None) -> list[str]:
     if not values:
         return ["regime_probe"]
     out: list[str] = []
-    for v in values:
-        out.extend([p.strip() for p in v.split(",") if p.strip()])
+    for value in values:
+        out.extend([part.strip() for part in value.split(",") if part.strip()])
     return out or ["regime_probe"]
 
 
-def build_strategy(strategy_id: str, *, settings: dict, symbol: str):
+def resolve_symbols(primary_symbol: str, values: list[str] | None) -> list[str]:
+    if not values:
+        return [primary_symbol]
+    out: list[str] = []
+    for value in values:
+        out.extend([part.strip().upper() for part in value.split(",") if part.strip()])
+    if primary_symbol.upper() not in out:
+        out.insert(0, primary_symbol.upper())
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for symbol in out:
+        if symbol in seen:
+            continue
+        seen.add(symbol)
+        deduped.append(symbol)
+    return deduped
+
+
+def build_strategy(
+    strategy_id: str,
+    *,
+    settings: dict,
+    symbol: str,
+    config_overrides: dict | None = None,
+):
+    config_overrides = config_overrides or {}
     if strategy_id == "regime_probe":
         base_cfg = settings.get("strategies", {}).get("momentum", {})
-        probe_cfg = {**base_cfg, "instrument": symbol, "lots": base_cfg.get("max_lots", 1)}
+        probe_cfg = {**base_cfg, "instrument": symbol, "lots": base_cfg.get("max_lots", 1), **config_overrides}
         strategy = RegimeProbeStrategy(name=strategy_id, config=probe_cfg)
         capital = float(probe_cfg.get("capital_per_trade", 200000) or 200000)
-        return strategy, capital
+        return strategy, capital, probe_cfg
     if strategy_id == "momentum":
         base_cfg = settings.get("strategies", {}).get("momentum", {})
-        momentum_cfg = {**base_cfg, "instrument": symbol}
+        momentum_cfg = {**base_cfg, "instrument": symbol, **config_overrides}
         strategy = MomentumStrategy(name=strategy_id, config=momentum_cfg)
         capital = float(momentum_cfg.get("capital_per_trade", 200000) or 200000)
-        return strategy, capital
+        return strategy, capital, momentum_cfg
     if strategy_id == "iron_condor":
         base_cfg = settings.get("strategies", {}).get("iron_condor", {})
-        ic_cfg = {**base_cfg, "instrument": symbol}
+        ic_cfg = {**base_cfg, "instrument": symbol, **config_overrides}
         strategy = IronCondorStrategy(name=strategy_id, config=ic_cfg)
         capital = float(ic_cfg.get("capital_per_trade", 100000) or 100000)
-        return strategy, capital
+        return strategy, capital, ic_cfg
     raise ValueError(f"Unsupported strategy '{strategy_id}'. Available: regime_probe, momentum, iron_condor")
+
+
+def _load_symbol_data(
+    *,
+    store: DataStore,
+    symbol: str,
+    timeframe: str,
+    start: datetime,
+    end: datetime,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    candles = store.read_time_series("candles", symbol=symbol, timeframe=timeframe, start=start, end=end)
+    if not candles.empty:
+        candles["timestamp"] = pd.to_datetime(candles["timestamp"], errors="coerce")
+        candles = candles.dropna(subset=["timestamp"]).sort_values("timestamp").reset_index(drop=True)
+
+    option_chain = store.read_time_series(
+        "option_chain",
+        symbol=symbol,
+        timeframe=timeframe,
+        start=start,
+        end=end,
+    )
+    return candles, option_chain
+
+
+def _build_engine(
+    *,
+    settings: dict,
+    simulator: FillSimulator,
+    initial_capital: float,
+    strategy,
+    periods_per_year: int,
+    risk_free_rate_annual: float,
+    monte_carlo_permutations: int,
+    minimum_trade_count: int,
+) -> BacktestEngine:
+    risk_cfg = settings.get("risk", {})
+    return BacktestEngine(
+        classifier=RegimeClassifier(thresholds=RegimeThresholds.from_config(settings.get("regime", {}))),
+        strategy=strategy,
+        simulator=simulator,
+        initial_capital=initial_capital,
+        periods_per_year=periods_per_year,
+        risk_free_rate_annual=risk_free_rate_annual,
+        monte_carlo_permutations=monte_carlo_permutations,
+        minimum_trade_count=minimum_trade_count,
+        circuit_breaker=CircuitBreaker(
+            initial_capital=initial_capital,
+            max_daily_loss_pct=float(risk_cfg.get("max_daily_loss_pct", 3.0) or 3.0),
+            max_drawdown_pct=float(risk_cfg.get("max_drawdown_pct", 15.0) or 15.0),
+            max_open_positions=int(risk_cfg.get("max_open_positions", 4) or 4),
+        ),
+    )
+
+
+def _run_single_backtest(
+    *,
+    settings: dict,
+    simulator: FillSimulator,
+    strategy,
+    initial_capital: float,
+    candles: pd.DataFrame,
+    vix: pd.DataFrame,
+    fii: pd.DataFrame,
+    option_chain: pd.DataFrame,
+    periods_per_year: int,
+    risk_free_rate_annual: float,
+    monte_carlo_permutations: int,
+    minimum_trade_count: int,
+    output_dir: str,
+    run_name: str,
+    write_report: bool,
+) -> tuple[dict[str, float], dict[str, str]]:
+    engine = _build_engine(
+        settings=settings,
+        simulator=simulator,
+        initial_capital=initial_capital,
+        strategy=strategy,
+        periods_per_year=periods_per_year,
+        risk_free_rate_annual=risk_free_rate_annual,
+        monte_carlo_permutations=monte_carlo_permutations,
+        minimum_trade_count=minimum_trade_count,
+    )
+    result = engine.run(candles=candles, vix_df=vix, fii_df=fii, option_chain_df=option_chain)
+    paths: dict[str, str] = {}
+    if write_report:
+        paths = write_backtest_report(result, output_dir=output_dir, run_name=run_name)
+    return result.metrics, paths
+
+
+def _run_walk_forward_backtest(
+    *,
+    settings: dict,
+    simulator: FillSimulator,
+    strategy_id: str,
+    symbol: str,
+    candles: pd.DataFrame,
+    vix: pd.DataFrame,
+    fii: pd.DataFrame,
+    option_chain: pd.DataFrame,
+    start: datetime,
+    end: datetime,
+    backtest_cfg: dict,
+    periods_per_year: int,
+    risk_free_rate_annual: float,
+    monte_carlo_permutations: int,
+    minimum_trade_count: int,
+    output_dir: str,
+    run_name: str,
+    write_report: bool,
+) -> tuple[dict[str, float], dict[str, str]]:
+    windows = generate_walk_forward_windows(
+        start=start,
+        end=end,
+        train_months=int(backtest_cfg.get("train_months", 12)),
+        test_months=int(backtest_cfg.get("test_months", 3)),
+        step_months=int(backtest_cfg.get("step_months", 3)),
+    )
+    if not windows:
+        raise ValueError("No walk-forward windows were generated for this date range/config.")
+
+    fold_rows: list[dict] = []
+    fold_regime_rows: list[pd.DataFrame] = []
+    for i, window in enumerate(windows, start=1):
+        strategy_fold, capital_fold, _ = build_strategy(strategy_id, settings=settings, symbol=symbol)
+        engine = _build_engine(
+            settings=settings,
+            simulator=simulator,
+            initial_capital=capital_fold,
+            strategy=strategy_fold,
+            periods_per_year=periods_per_year,
+            risk_free_rate_annual=risk_free_rate_annual,
+            monte_carlo_permutations=monte_carlo_permutations,
+            minimum_trade_count=minimum_trade_count,
+        )
+        test_candles = candles.loc[
+            (candles["timestamp"] >= pd.Timestamp(window.test_start))
+            & (candles["timestamp"] < pd.Timestamp(window.test_end))
+        ]
+        if test_candles.empty:
+            continue
+
+        result = engine.run(candles=test_candles, vix_df=vix, fii_df=fii, option_chain_df=option_chain)
+        row = {
+            "fold": i,
+            "train_start": window.train_start.isoformat(),
+            "train_end": window.train_end.isoformat(),
+            "test_start": window.test_start.isoformat(),
+            "test_end": window.test_end.isoformat(),
+            **result.metrics,
+        }
+        if not result.regimes.empty:
+            regime_counts = result.regimes["regime"].value_counts(normalize=True)
+            row["dominant_regime"] = str(regime_counts.index[0])
+            row["dominant_regime_share"] = float(regime_counts.iloc[0])
+        fold_rows.append(row)
+
+        segmented = regime_segmented_returns(result.equity_curve, result.regimes)
+        if not segmented.empty:
+            segmented = segmented.copy()
+            segmented["fold"] = i
+            fold_regime_rows.append(segmented)
+
+    if not fold_rows:
+        return {"folds": 0.0}, {}
+
+    fold_df = pd.DataFrame(fold_rows)
+    summary = aggregate_walk_forward_metrics(fold_rows)
+
+    regime_table = pd.DataFrame()
+    if fold_regime_rows:
+        all_seg = pd.concat(fold_regime_rows, ignore_index=True)
+        regime_table = (
+            all_seg.groupby("regime", as_index=False)
+            .agg(
+                folds=("fold", "nunique"),
+                bars=("bars", "sum"),
+                mean_bar_return_pct=("mean_bar_return_pct", "mean"),
+                cumulative_return_pct=("cumulative_return_pct", "mean"),
+            )
+            .sort_values("regime")
+            .reset_index(drop=True)
+        )
+
+    paths: dict[str, str] = {}
+    if write_report:
+        paths = write_walkforward_report(
+            folds=fold_df,
+            summary=summary,
+            regime_table=regime_table,
+            output_dir=output_dir,
+            run_name=run_name,
+        )
+    return summary, paths
+
+
+def _normalized_metric(metrics: dict[str, float], *, walk_forward: bool, metric: str) -> float:
+    if walk_forward:
+        key = f"{metric}_mean"
+        if key in metrics:
+            return float(metrics[key])
+    if metric in metrics:
+        return float(metrics[metric])
+    return 0.0
+
+
+def _resolve_sensitivity_params(
+    *,
+    strategy_id: str,
+    strategy_cfg: dict,
+    sensitivity_cfg: dict,
+) -> list[str]:
+    params_by_strategy = sensitivity_cfg.get("params_by_strategy", {})
+    configured = params_by_strategy.get(strategy_id)
+    candidates = configured if configured else DEFAULT_SENSITIVITY_PARAMS.get(strategy_id, [])
+    params: list[str] = []
+    for param in candidates:
+        if param not in strategy_cfg:
+            continue
+        value = strategy_cfg[param]
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, (int, float)):
+            params.append(param)
+
+    max_params = int(sensitivity_cfg.get("max_params_per_strategy", 3) or 3)
+    if max_params > 0:
+        params = params[:max_params]
+    return params
+
+
+def _run_strategy(
+    *,
+    walk_forward: bool,
+    settings: dict,
+    simulator: FillSimulator,
+    strategy_id: str,
+    symbol: str,
+    strategy,
+    initial_capital: float,
+    candles: pd.DataFrame,
+    vix: pd.DataFrame,
+    fii: pd.DataFrame,
+    option_chain: pd.DataFrame,
+    start: datetime,
+    end: datetime,
+    backtest_cfg: dict,
+    periods_per_year: int,
+    risk_free_rate_annual: float,
+    monte_carlo_permutations: int,
+    minimum_trade_count: int,
+    output_dir: str,
+    run_name: str,
+    write_report: bool,
+) -> tuple[dict[str, float], dict[str, str]]:
+    if walk_forward:
+        return _run_walk_forward_backtest(
+            settings=settings,
+            simulator=simulator,
+            strategy_id=strategy_id,
+            symbol=symbol,
+            candles=candles,
+            vix=vix,
+            fii=fii,
+            option_chain=option_chain,
+            start=start,
+            end=end,
+            backtest_cfg=backtest_cfg,
+            periods_per_year=periods_per_year,
+            risk_free_rate_annual=risk_free_rate_annual,
+            monte_carlo_permutations=monte_carlo_permutations,
+            minimum_trade_count=minimum_trade_count,
+            output_dir=output_dir,
+            run_name=run_name,
+            write_report=write_report,
+        )
+    return _run_single_backtest(
+        settings=settings,
+        simulator=simulator,
+        strategy=strategy,
+        initial_capital=initial_capital,
+        candles=candles,
+        vix=vix,
+        fii=fii,
+        option_chain=option_chain,
+        periods_per_year=periods_per_year,
+        risk_free_rate_annual=risk_free_rate_annual,
+        monte_carlo_permutations=monte_carlo_permutations,
+        minimum_trade_count=minimum_trade_count,
+        output_dir=output_dir,
+        run_name=run_name,
+        write_report=write_report,
+    )
 
 
 def main() -> int:
     args = parse_args()
     settings = load_settings(args.settings)
     strategy_ids = resolve_strategies(args.strategies)
+    symbols = resolve_symbols(args.symbol.upper(), args.symbols)
 
     cache_dir = REPO_ROOT / settings.get("data", {}).get("cache_dir", "data/cache")
     store = DataStore(base_dir=str(cache_dir))
@@ -101,14 +437,6 @@ def main() -> int:
     backtest_cfg = settings.get("backtest", {})
     start = args.start or parse_date(backtest_cfg.get("start_date", "2022-01-01"))
     end = args.end or parse_date(backtest_cfg.get("end_date", "2025-12-31"))
-
-    candles = store.read_time_series("candles", symbol=args.symbol, timeframe=args.timeframe, start=start, end=end)
-    if candles.empty:
-        print("No candle data in cache for the requested window.")
-        print("Run: python scripts/download_historical.py --symbol NIFTY --timeframe 1d --days 365")
-        return 1
-    candles["timestamp"] = pd.to_datetime(candles["timestamp"], errors="coerce")
-    candles = candles.dropna(subset=["timestamp"]).sort_values("timestamp").reset_index(drop=True)
 
     vix = store.read_time_series("vix", symbol="INDIAVIX", timeframe="1d", start=start, end=end)
     fii = store.read_time_series(
@@ -118,13 +446,6 @@ def main() -> int:
         start=start,
         end=end,
         timestamp_col="date",
-    )
-    option_chain = store.read_time_series(
-        "option_chain",
-        symbol=args.symbol,
-        timeframe=args.timeframe,
-        start=start,
-        end=end,
     )
 
     simulator = FillSimulator(
@@ -137,137 +458,223 @@ def main() -> int:
         stamp_duty_pct=float(backtest_cfg.get("stamp_duty_pct", 0.003) or 0.003),
     )
     output_dir = str(REPO_ROOT / args.output_dir)
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+
     periods_per_year = 252 if args.timeframe == "1d" else 252 * 75
     risk_free_rate_annual = float(backtest_cfg.get("risk_free_rate_annual", 0.07) or 0.07)
     monte_carlo_permutations = int(backtest_cfg.get("monte_carlo_permutations", 200) or 200)
     minimum_trade_count = int(backtest_cfg.get("minimum_trade_count", 50) or 50)
 
+    sensitivity_cfg = backtest_cfg.get("sensitivity", {})
+    sensitivity_enabled = bool(args.sensitivity or sensitivity_cfg.get("enabled", False))
+    sensitivity_multipliers = [float(v) for v in sensitivity_cfg.get("multipliers", [0.8, 1.0, 1.2])]
+
     print("=" * 72)
     print("Backtest Run")
     print("=" * 72)
-    print(f"symbol={args.symbol} timeframe={args.timeframe} start={start.date()} end={end.date()}")
+    print(f"symbols={symbols} timeframe={args.timeframe} start={start.date()} end={end.date()}")
     print(f"strategies={strategy_ids}")
-    print(f"walk_forward={args.walk_forward}")
+    print(f"walk_forward={args.walk_forward} sensitivity={sensitivity_enabled}")
 
-    for strategy_id in strategy_ids:
-        strategy, initial_capital = build_strategy(strategy_id, settings=settings, symbol=args.symbol)
+    runs_completed = 0
+    cross_rows: list[dict] = []
+    sensitivity_overview_rows: list[dict] = []
 
-        if args.walk_forward:
-            windows = generate_walk_forward_windows(
+    for symbol in symbols:
+        candles, option_chain = _load_symbol_data(
+            store=store,
+            symbol=symbol,
+            timeframe=args.timeframe,
+            start=start,
+            end=end,
+        )
+        if candles.empty:
+            print(f"\n[{symbol}] No candle data in cache for requested window; skipping symbol")
+            continue
+
+        for strategy_id in strategy_ids:
+            strategy, initial_capital, strategy_cfg = build_strategy(strategy_id, settings=settings, symbol=symbol)
+            run_suffix = "walkforward" if args.walk_forward else "backtest"
+            run_name = f"{strategy_id}_{symbol.lower()}_{args.timeframe}_{start.date()}_{end.date()}_{run_suffix}"
+
+            metrics, paths = _run_strategy(
+                walk_forward=args.walk_forward,
+                settings=settings,
+                simulator=simulator,
+                strategy_id=strategy_id,
+                symbol=symbol,
+                strategy=strategy,
+                initial_capital=initial_capital,
+                candles=candles,
+                vix=vix,
+                fii=fii,
+                option_chain=option_chain,
                 start=start,
                 end=end,
-                train_months=int(backtest_cfg.get("train_months", 12)),
-                test_months=int(backtest_cfg.get("test_months", 3)),
-                step_months=int(backtest_cfg.get("step_months", 3)),
-            )
-            if not windows:
-                raise ValueError("No walk-forward windows were generated for this date range/config.")
-
-            fold_rows: list[dict] = []
-            fold_regime_rows: list[pd.DataFrame] = []
-            for i, w in enumerate(windows, start=1):
-                classifier = RegimeClassifier(thresholds=RegimeThresholds.from_config(settings.get("regime", {})))
-                strategy_fold, _ = build_strategy(strategy_id, settings=settings, symbol=args.symbol)
-                engine = BacktestEngine(
-                    classifier=classifier,
-                    strategy=strategy_fold,
-                    simulator=simulator,
-                    initial_capital=initial_capital,
-                    periods_per_year=periods_per_year,
-                    risk_free_rate_annual=risk_free_rate_annual,
-                    monte_carlo_permutations=monte_carlo_permutations,
-                    minimum_trade_count=minimum_trade_count,
-                    circuit_breaker=CircuitBreaker(
-                        initial_capital=initial_capital,
-                        max_daily_loss_pct=float(settings.get("risk", {}).get("max_daily_loss_pct", 3.0) or 3.0),
-                        max_drawdown_pct=float(settings.get("risk", {}).get("max_drawdown_pct", 15.0) or 15.0),
-                        max_open_positions=int(settings.get("risk", {}).get("max_open_positions", 4) or 4),
-                    ),
-                )
-                test_candles = candles.loc[
-                    (candles["timestamp"] >= pd.Timestamp(w.test_start))
-                    & (candles["timestamp"] < pd.Timestamp(w.test_end))
-                ]
-                result = engine.run(candles=test_candles, vix_df=vix, fii_df=fii, option_chain_df=option_chain)
-                row = {
-                    "fold": i,
-                    "train_start": w.train_start.isoformat(),
-                    "train_end": w.train_end.isoformat(),
-                    "test_start": w.test_start.isoformat(),
-                    "test_end": w.test_end.isoformat(),
-                    **result.metrics,
-                }
-                if not result.regimes.empty:
-                    regime_counts = result.regimes["regime"].value_counts(normalize=True)
-                    row["dominant_regime"] = str(regime_counts.index[0])
-                    row["dominant_regime_share"] = float(regime_counts.iloc[0])
-                fold_rows.append(row)
-                seg = regime_segmented_returns(result.equity_curve, result.regimes)
-                if not seg.empty:
-                    seg = seg.copy()
-                    seg["fold"] = i
-                    fold_regime_rows.append(seg)
-
-            fold_df = pd.DataFrame(fold_rows)
-            summary = aggregate_walk_forward_metrics(fold_rows)
-            regime_table = pd.DataFrame()
-            if fold_regime_rows:
-                all_seg = pd.concat(fold_regime_rows, ignore_index=True)
-                regime_table = (
-                    all_seg.groupby("regime", as_index=False)
-                    .agg(
-                        folds=("fold", "nunique"),
-                        bars=("bars", "sum"),
-                        mean_bar_return_pct=("mean_bar_return_pct", "mean"),
-                        cumulative_return_pct=("cumulative_return_pct", "mean"),
-                    )
-                    .sort_values("regime")
-                    .reset_index(drop=True)
-                )
-            run_name = f"{strategy_id}_{args.symbol.lower()}_{args.timeframe}_{start.date()}_{end.date()}_walkforward"
-            paths = write_walkforward_report(
-                folds=fold_df,
-                summary=summary,
-                regime_table=regime_table,
-                output_dir=output_dir,
-                run_name=run_name,
-            )
-
-            print(f"\n[{strategy_id}] Walk-forward complete")
-            print(f"  folds={len(fold_df)} return_mean={summary.get('total_return_pct_mean', 0.0):.2f}")
-            for k, p in paths.items():
-                print(f"  {k}: {p}")
-        else:
-            classifier = RegimeClassifier(thresholds=RegimeThresholds.from_config(settings.get("regime", {})))
-            engine = BacktestEngine(
-                classifier=classifier,
-                strategy=strategy,
-                simulator=simulator,
-                initial_capital=initial_capital,
+                backtest_cfg=backtest_cfg,
                 periods_per_year=periods_per_year,
                 risk_free_rate_annual=risk_free_rate_annual,
                 monte_carlo_permutations=monte_carlo_permutations,
                 minimum_trade_count=minimum_trade_count,
-                circuit_breaker=CircuitBreaker(
-                    initial_capital=initial_capital,
-                    max_daily_loss_pct=float(settings.get("risk", {}).get("max_daily_loss_pct", 3.0) or 3.0),
-                    max_drawdown_pct=float(settings.get("risk", {}).get("max_drawdown_pct", 15.0) or 15.0),
-                    max_open_positions=int(settings.get("risk", {}).get("max_open_positions", 4) or 4),
-                ),
+                output_dir=output_dir,
+                run_name=run_name,
+                write_report=True,
             )
-            result = engine.run(candles=candles, vix_df=vix, fii_df=fii, option_chain_df=option_chain)
+            runs_completed += 1
 
-            run_name = f"{strategy_id}_{args.symbol.lower()}_{args.timeframe}_{start.date()}_{end.date()}"
-            paths = write_backtest_report(result, output_dir=output_dir, run_name=run_name)
+            total_return = _normalized_metric(metrics, walk_forward=args.walk_forward, metric="total_return_pct")
+            sharpe = _normalized_metric(metrics, walk_forward=args.walk_forward, metric="sharpe_ratio")
+            max_dd = _normalized_metric(metrics, walk_forward=args.walk_forward, metric="max_drawdown_pct")
+            anti_overfit = _normalized_metric(metrics, walk_forward=args.walk_forward, metric="anti_overfit_pass")
 
-            print(f"\n[{strategy_id}] Backtest complete")
-            print(f"  fills={int(result.metrics['fill_count'])} final_equity={result.metrics['final_equity']:.2f}")
-            print(
-                f"  total_return_pct={result.metrics['total_return_pct']:.2f} "
-                f"max_drawdown_pct={result.metrics['max_drawdown_pct']:.2f}"
+            print(f"\n[{strategy_id}] symbol={symbol}")
+            print(f"  total_return_pct={total_return:.2f} sharpe={sharpe:.3f} max_drawdown_pct={max_dd:.2f}")
+            for key, path in paths.items():
+                print(f"  {key}: {path}")
+
+            cross_rows.append(
+                {
+                    "strategy": strategy_id,
+                    "symbol": symbol,
+                    "timeframe": args.timeframe,
+                    "walk_forward": float(args.walk_forward),
+                    "total_return_pct": total_return,
+                    "sharpe_ratio": sharpe,
+                    "max_drawdown_pct": max_dd,
+                    "anti_overfit_pass": anti_overfit,
+                }
             )
-            for k, p in paths.items():
-                print(f"  {k}: {p}")
+
+            if not sensitivity_enabled:
+                continue
+
+            params = _resolve_sensitivity_params(
+                strategy_id=strategy_id,
+                strategy_cfg=strategy_cfg,
+                sensitivity_cfg=sensitivity_cfg,
+            )
+            variants = build_sensitivity_variants(
+                base_config=strategy_cfg,
+                params=params,
+                multipliers=sensitivity_multipliers,
+            )
+            if not variants:
+                print("  sensitivity: no eligible numeric params configured")
+                continue
+
+            variant_rows: list[dict] = []
+            base_total_return = total_return
+            for variant in variants:
+                variant_strategy, variant_capital, _ = build_strategy(
+                    strategy_id,
+                    settings=settings,
+                    symbol=symbol,
+                    config_overrides=variant["overrides"],
+                )
+                variant_metrics, _ = _run_strategy(
+                    walk_forward=args.walk_forward,
+                    settings=settings,
+                    simulator=simulator,
+                    strategy_id=strategy_id,
+                    symbol=symbol,
+                    strategy=variant_strategy,
+                    initial_capital=variant_capital,
+                    candles=candles,
+                    vix=vix,
+                    fii=fii,
+                    option_chain=option_chain,
+                    start=start,
+                    end=end,
+                    backtest_cfg=backtest_cfg,
+                    periods_per_year=periods_per_year,
+                    risk_free_rate_annual=risk_free_rate_annual,
+                    monte_carlo_permutations=monte_carlo_permutations,
+                    minimum_trade_count=minimum_trade_count,
+                    output_dir=output_dir,
+                    run_name=f"{run_name}_sens_{variant['variant_id']}",
+                    write_report=False,
+                )
+                variant_rows.append(
+                    {
+                        "strategy": strategy_id,
+                        "symbol": symbol,
+                        "variant_id": variant["variant_id"],
+                        "param": variant["param"],
+                        "multiplier": variant["multiplier"],
+                        "base_value": variant["base_value"],
+                        "new_value": variant["new_value"],
+                        "total_return_pct": _normalized_metric(
+                            variant_metrics,
+                            walk_forward=args.walk_forward,
+                            metric="total_return_pct",
+                        ),
+                        "sharpe_ratio": _normalized_metric(
+                            variant_metrics,
+                            walk_forward=args.walk_forward,
+                            metric="sharpe_ratio",
+                        ),
+                        "max_drawdown_pct": _normalized_metric(
+                            variant_metrics,
+                            walk_forward=args.walk_forward,
+                            metric="max_drawdown_pct",
+                        ),
+                    }
+                )
+
+            variant_df = pd.DataFrame(variant_rows)
+            sensitivity_base_name = (
+                f"{strategy_id}_{symbol.lower()}_{args.timeframe}_{start.date()}_{end.date()}_sensitivity"
+            )
+            sensitivity_csv = Path(output_dir) / f"{sensitivity_base_name}.csv"
+            variant_df.to_csv(sensitivity_csv, index=False)
+
+            sensitivity_summary = summarize_sensitivity_results(
+                variant_rows=variant_rows,
+                base_total_return_pct=base_total_return,
+            )
+            sensitivity_summary.update(
+                {
+                    "strategy": strategy_id,
+                    "symbol": symbol,
+                    "timeframe": args.timeframe,
+                    "walk_forward": float(args.walk_forward),
+                    "base_total_return_pct": float(base_total_return),
+                }
+            )
+            sensitivity_json = Path(output_dir) / f"{sensitivity_base_name}_summary.json"
+            sensitivity_json.write_text(json.dumps(sensitivity_summary, indent=2, sort_keys=True))
+            print(f"  sensitivity_csv: {sensitivity_csv}")
+            print(f"  sensitivity_summary_json: {sensitivity_json}")
+            sensitivity_overview_rows.append(sensitivity_summary)
+
+    if runs_completed == 0:
+        print("No backtests executed (missing candle data for selected symbols/date range).")
+        return 1
+
+    if len(symbols) > 1 and cross_rows:
+        cross_detail = pd.DataFrame(cross_rows).sort_values(["strategy", "symbol"]).reset_index(drop=True)
+        cross_summary = aggregate_cross_instrument_results(cross_rows)
+        stamp = f"{args.timeframe}_{start.date()}_{end.date()}"
+
+        detail_csv = Path(output_dir) / f"cross_instrument_detail_{stamp}.csv"
+        summary_csv = Path(output_dir) / f"cross_instrument_summary_{stamp}.csv"
+        summary_json = Path(output_dir) / f"cross_instrument_summary_{stamp}.json"
+
+        cross_detail.to_csv(detail_csv, index=False)
+        cross_summary.to_csv(summary_csv, index=False)
+        summary_json.write_text(json.dumps(cross_summary.to_dict(orient="records"), indent=2, sort_keys=True))
+
+        print("\nCross-instrument validation")
+        print(f"  detail_csv: {detail_csv}")
+        print(f"  summary_csv: {summary_csv}")
+        print(f"  summary_json: {summary_json}")
+
+    if sensitivity_overview_rows:
+        overview_df = pd.DataFrame(sensitivity_overview_rows).sort_values(["strategy", "symbol"]).reset_index(drop=True)
+        overview_path = Path(output_dir) / f"sensitivity_overview_{args.timeframe}_{start.date()}_{end.date()}.csv"
+        overview_df.to_csv(overview_path, index=False)
+        print("\nSensitivity overview")
+        print(f"  overview_csv: {overview_path}")
 
     return 0
 

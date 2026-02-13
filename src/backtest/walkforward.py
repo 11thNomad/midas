@@ -68,3 +68,121 @@ def aggregate_walk_forward_metrics(fold_metrics: list[dict]) -> dict[str, float]
         summary[f"{col}_mean"] = float(frame[col].mean())
         summary[f"{col}_median"] = float(frame[col].median())
     return summary
+
+
+def build_sensitivity_variants(
+    *,
+    base_config: dict,
+    params: list[str],
+    multipliers: list[float],
+) -> list[dict]:
+    """Build parameter-perturbed strategy config overrides."""
+    variants: list[dict] = []
+    seen: set[tuple[str, float | int]] = set()
+    for param in params:
+        if param not in base_config:
+            continue
+        base_value = base_config[param]
+        if isinstance(base_value, bool):
+            continue
+        if not isinstance(base_value, (int, float)):
+            continue
+        for multiplier in multipliers:
+            m = float(multiplier)
+            if abs(m - 1.0) < 1e-12:
+                continue
+            if isinstance(base_value, int):
+                candidate: float | int = max(1, int(round(base_value * m)))
+            else:
+                candidate = float(base_value) * m
+            key = (param, candidate)
+            if key in seen:
+                continue
+            seen.add(key)
+            variants.append(
+                {
+                    "variant_id": f"{param}_x{m:.2f}",
+                    "param": param,
+                    "multiplier": m,
+                    "base_value": float(base_value),
+                    "new_value": float(candidate),
+                    "overrides": {param: candidate},
+                }
+            )
+    return variants
+
+
+def summarize_sensitivity_results(
+    *,
+    variant_rows: list[dict],
+    base_total_return_pct: float,
+) -> dict[str, float]:
+    """Summarize parameter sensitivity outcomes into scalar diagnostics."""
+    if not variant_rows:
+        return {
+            "variant_count": 0.0,
+            "positive_return_share": 0.0,
+            "median_return_pct": 0.0,
+            "worst_return_pct": 0.0,
+            "robustness_score": 0.0,
+        }
+
+    frame = pd.DataFrame(variant_rows)
+    returns = pd.to_numeric(frame.get("total_return_pct", pd.Series(dtype="float64")), errors="coerce").dropna()
+    if returns.empty:
+        return {
+            "variant_count": float(len(frame)),
+            "positive_return_share": 0.0,
+            "median_return_pct": 0.0,
+            "worst_return_pct": 0.0,
+            "robustness_score": 0.0,
+        }
+
+    positive_share = float((returns > 0.0).mean())
+    median_return = float(returns.median())
+    worst_return = float(returns.min())
+    if base_total_return_pct > 0:
+        retention = max(0.0, min(1.0, median_return / base_total_return_pct))
+        robustness = positive_share * retention
+    else:
+        robustness = 0.0
+
+    return {
+        "variant_count": float(len(returns)),
+        "positive_return_share": positive_share,
+        "median_return_pct": median_return,
+        "worst_return_pct": worst_return,
+        "robustness_score": float(robustness),
+    }
+
+
+def aggregate_cross_instrument_results(rows: list[dict]) -> pd.DataFrame:
+    """Aggregate per-symbol backtest rows into cross-instrument summaries."""
+    if not rows:
+        return pd.DataFrame()
+    frame = pd.DataFrame(rows)
+    if frame.empty or "strategy" not in frame.columns or "symbol" not in frame.columns:
+        return pd.DataFrame()
+
+    metric_cols = [
+        "total_return_pct",
+        "sharpe_ratio",
+        "max_drawdown_pct",
+        "anti_overfit_pass",
+    ]
+    for c in metric_cols:
+        if c not in frame.columns:
+            frame[c] = pd.NA
+        frame[c] = pd.to_numeric(frame[c], errors="coerce")
+
+    grouped = frame.groupby("strategy", as_index=False).agg(
+        symbols_tested=("symbol", "nunique"),
+        symbols_positive_return=("total_return_pct", lambda s: int((s > 0).sum())),
+        total_return_pct_mean=("total_return_pct", "mean"),
+        total_return_pct_std=("total_return_pct", "std"),
+        sharpe_ratio_mean=("sharpe_ratio", "mean"),
+        max_drawdown_pct_mean=("max_drawdown_pct", "mean"),
+        anti_overfit_pass_share=("anti_overfit_pass", "mean"),
+    )
+    grouped["symbols_positive_return_share"] = grouped["symbols_positive_return"] / grouped["symbols_tested"].replace(0, pd.NA)
+    return grouped.sort_values("strategy").reset_index(drop=True)
