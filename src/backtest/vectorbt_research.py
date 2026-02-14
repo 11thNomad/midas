@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, cast
@@ -193,12 +194,17 @@ def run_vectorbt_research(
 
     equity = portfolio.value()
     trades = portfolio.trades.records_readable
+    trades_count = float(_as_float(portfolio.trades.count()))
+    total_return_pct = float(_as_float(portfolio.total_return()) * 100.0)
+    sharpe_raw = float(_as_float(portfolio.sharpe_ratio()))
+    max_drawdown_pct = float(_as_float(portfolio.max_drawdown()) * 100.0)
+
     metrics = {
         "bars": float(len(indexed)),
-        "trades": float(_as_float(portfolio.trades.count())),
-        "total_return_pct": float(_as_float(portfolio.total_return()) * 100.0),
-        "sharpe_ratio": float(_as_float(portfolio.sharpe_ratio())),
-        "max_drawdown_pct": float(_as_float(portfolio.max_drawdown()) * 100.0),
+        "trades": trades_count,
+        "total_return_pct": _finite_or_nan(total_return_pct),
+        "sharpe_ratio": _finite_or_nan(sharpe_raw) if trades_count > 0 else float("nan"),
+        "max_drawdown_pct": _finite_or_nan(max_drawdown_pct),
     }
     equity_curve = (
         pd.DataFrame({"timestamp": equity.index, "equity": equity.values}).reset_index(drop=True)
@@ -362,6 +368,10 @@ def _as_float(value: Any) -> float:
         return float(value)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _finite_or_nan(value: float) -> float:
+    return value if math.isfinite(value) else float("nan")
 
 
 def _prep_timeframe_df(df: pd.DataFrame | None, *, timestamp_col: str) -> pd.DataFrame:

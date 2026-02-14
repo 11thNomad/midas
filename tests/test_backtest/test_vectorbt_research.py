@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from datetime import datetime
 
 import pandas as pd
@@ -117,3 +118,16 @@ def test_run_vectorbt_research_handles_irregular_index_frequency():
         config=VectorBTResearchConfig(adx_min=20.0, freq=None),
     )
     assert "sharpe_ratio" in result.metrics
+
+
+def test_run_vectorbt_research_sets_nan_sharpe_when_no_trades():
+    snapshots = _sample_snapshots().copy()
+    snapshots["regime"] = "high_vol_choppy"
+    snapshots["adx_14"] = 10.0
+    result = run_vectorbt_research(
+        candles=_sample_candles(),
+        snapshots=snapshots,
+        config=VectorBTResearchConfig(adx_min=25.0),
+    )
+    assert result.metrics["trades"] == 0.0
+    assert math.isnan(result.metrics["sharpe_ratio"])

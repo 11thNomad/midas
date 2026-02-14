@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from datetime import datetime
 
 from src.backtest.walkforward import (
@@ -35,6 +36,17 @@ def test_aggregate_walk_forward_metrics_returns_summary_stats():
     assert summary["folds"] == 2.0
     assert summary["total_return_pct_mean"] == 3.0
     assert summary["max_drawdown_pct_median"] == 2.0
+
+
+def test_aggregate_walk_forward_metrics_ignores_infinite_values():
+    summary = aggregate_walk_forward_metrics(
+        [
+            {"total_return_pct": 2.0, "sharpe_ratio": float("inf")},
+            {"total_return_pct": 4.0, "sharpe_ratio": 1.0},
+        ]
+    )
+    assert summary["total_return_pct_mean"] == 3.0
+    assert math.isclose(summary["sharpe_ratio_mean"], 1.0)
 
 
 def test_build_sensitivity_variants_creates_numeric_perturbations():

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 
@@ -64,6 +65,8 @@ def aggregate_walk_forward_metrics(fold_metrics: list[dict[str, Any]]) -> dict[s
 
     frame = pd.DataFrame(fold_metrics)
     numeric_cols = [c for c in frame.columns if pd.api.types.is_numeric_dtype(frame[c])]
+    if numeric_cols:
+        frame[numeric_cols] = frame[numeric_cols].replace([np.inf, -np.inf], np.nan)
     summary: dict[str, float] = {"folds": float(len(frame))}
     for col in numeric_cols:
         summary[f"{col}_mean"] = float(frame[col].mean())
