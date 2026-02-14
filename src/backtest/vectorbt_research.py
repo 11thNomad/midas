@@ -251,6 +251,21 @@ def run_vectorbt_walk_forward(
             }
         )
     folds = pd.DataFrame(rows)
+    if folds.empty:
+        folds = pd.DataFrame(
+            columns=[
+                "fold",
+                "train_start",
+                "train_end",
+                "test_start",
+                "test_end",
+                "bars",
+                "trades",
+                "total_return_pct",
+                "sharpe_ratio",
+                "max_drawdown_pct",
+            ]
+        )
     summary = aggregate_walk_forward_metrics(rows)
     return folds, summary
 

@@ -20,8 +20,11 @@ from src.backtest import (
     VectorBTResearchConfig,
     apply_parameter_set,
     build_snapshots_from_market_data,
+    build_trade_attribution,
+    evaluate_vectorbt_promotion_gate,
     parse_parameter_sets,
     parse_vectorbt_fee_profiles,
+    parse_vectorbt_promotion_gate_config,
     rank_parameter_results,
     resolve_vectorbt_costs,
     run_vectorbt_research,
@@ -188,6 +191,8 @@ def main() -> int:
     store = DataStore(base_dir=str(cache_dir))
     snapshot_store = SignalSnapshotStore(base_dir=str(cache_dir))
     out_dir = resolve_output_dir(raw_output_dir=args.output_dir, run_prefix="vectorbt_paramsets")
+    details_dir = out_dir / "details"
+    details_dir.mkdir(parents=True, exist_ok=True)
 
     candles = store.read_time_series(
         "candles",
@@ -280,6 +285,26 @@ def main() -> int:
                 freq=cfg.freq,
             )
             run = run_vectorbt_research(candles=candles, snapshots=snapshots, config=cfg)
+            detail_prefix = f"{params.set_id}_{fee_profile.name}"
+            schedule_path = details_dir / f"{detail_prefix}_schedule.csv"
+            equity_path = details_dir / f"{detail_prefix}_equity.csv"
+            trades_path = details_dir / f"{detail_prefix}_trades.csv"
+            attribution_path = details_dir / f"{detail_prefix}_trade_attribution.csv"
+            run.schedule.to_csv(schedule_path, index=False)
+            run.equity_curve.to_csv(equity_path, index=False)
+            if isinstance(run.trades, pd.DataFrame):
+                run.trades.to_csv(trades_path, index=False)
+                attribution = build_trade_attribution(
+                    trades=run.trades,
+                    schedule=run.schedule,
+                    set_id=params.set_id,
+                    fee_profile=fee_profile.name,
+                )
+            else:
+                pd.DataFrame().to_csv(trades_path, index=False)
+                attribution = pd.DataFrame()
+            attribution.to_csv(attribution_path, index=False)
+
             row: dict[str, Any] = {
                 "set_id": params.set_id,
                 "fee_profile": fee_profile.name,
@@ -290,6 +315,9 @@ def main() -> int:
                 "entry_regimes": ",".join(params.entry_regimes),
                 "adx_min": float(params.adx_min),
                 "vix_max": float(params.vix_max) if params.vix_max is not None else float("nan"),
+                "vix_max_label": (
+                    f"{float(params.vix_max):.2f}" if params.vix_max is not None else "none"
+                ),
                 "notes": params.notes,
             }
             row.update({key: _as_float(value) for key, value in run.metrics.items()})
@@ -320,6 +348,14 @@ def main() -> int:
     rank_by = args.rank_by or (
         "wf_total_return_pct_mean" if args.walk_forward else "total_return_pct"
     )
+    if rank_by not in results_df.columns:
+        fallback = "total_return_pct"
+        if fallback not in results_df.columns:
+            raise ValueError(
+                f"rank_by column not found: {rank_by} and fallback column missing: {fallback}"
+            )
+        print(f"rank_by={rank_by} not found; falling back to {fallback}")
+        rank_by = fallback
     leaderboard = rank_parameter_results(
         results_df,
         rank_by=rank_by,
@@ -333,18 +369,35 @@ def main() -> int:
     robustness_df = summarize_set_robustness(leaderboard, walk_forward=args.walk_forward)
     top_sets_df = robustness_df.head(top_k).reset_index(drop=True)
     best_set = top_sets_df.iloc[0].to_dict() if not top_sets_df.empty else None
+    gate_cfg = parse_vectorbt_promotion_gate_config(backtest_cfg)
+    gate_df = (
+        evaluate_vectorbt_promotion_gate(robustness_df, gate_cfg)
+        if gate_cfg.enabled and not robustness_df.empty
+        else pd.DataFrame()
+    )
+    approved_sets = (
+        gate_df.loc[gate_df["promotion_pass"]].copy()
+        if not gate_df.empty and "promotion_pass" in gate_df.columns
+        else pd.DataFrame()
+    )
 
     results_path = out_dir / "vectorbt_parameter_set_results.csv"
     leaderboard_path = out_dir / "vectorbt_parameter_set_leaderboard.csv"
     top_path = out_dir / "vectorbt_parameter_set_top.csv"
     robustness_path = out_dir / "vectorbt_parameter_set_robustness.csv"
     top_sets_path = out_dir / "vectorbt_parameter_set_top_sets.csv"
+    gate_path = out_dir / "vectorbt_parameter_set_promotion_gate.csv"
     summary_path = out_dir / "vectorbt_parameter_set_summary.json"
     results_df.to_csv(results_path, index=False)
     leaderboard.to_csv(leaderboard_path, index=False)
     top_df.to_csv(top_path, index=False)
     robustness_df.to_csv(robustness_path, index=False)
     top_sets_df.to_csv(top_sets_path, index=False)
+    gate_df.to_csv(gate_path, index=False)
+    try:
+        details_dir_label = str(details_dir.relative_to(REPO_ROOT))
+    except ValueError:
+        details_dir_label = str(details_dir)
     summary_path.write_text(
         json.dumps(
             {
@@ -361,9 +414,24 @@ def main() -> int:
                 ),
                 "parameter_set_count": int(len(param_sets)),
                 "run_count": int(len(results_df)),
+                "details_dir": details_dir_label,
                 "eligible_count": int(len(eligible)),
                 "best_eligible_set": best,
                 "best_robust_set": best_set,
+                "promotion_gate": {
+                    "enabled": gate_cfg.enabled,
+                    "min_trades_mean": gate_cfg.min_trades_mean,
+                    "min_metric_worst": gate_cfg.min_metric_worst,
+                    "min_metric_mean": gate_cfg.min_metric_mean,
+                    "max_drawdown_abs_worst": gate_cfg.max_drawdown_abs_worst,
+                    "min_eligible_profile_share": gate_cfg.min_eligible_profile_share,
+                    "approved_set_count": int(len(approved_sets)),
+                    "approved_sets": (
+                        approved_sets["set_id"].astype(str).unique().tolist()
+                        if not approved_sets.empty and "set_id" in approved_sets.columns
+                        else []
+                    ),
+                },
             },
             indent=2,
             sort_keys=True,
@@ -376,6 +444,7 @@ def main() -> int:
     print(f"top={top_path}")
     print(f"robustness={robustness_path}")
     print(f"top_sets={top_sets_path}")
+    print(f"promotion_gate={gate_path}")
     print(f"summary={summary_path}")
     return 0
 

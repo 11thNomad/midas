@@ -250,12 +250,13 @@ Required invariant:
 
 ## 11.1 Immediate Next Focus
 1. Trade-attribution and signal-context dashboard in Streamlit:
+   - status: implemented for vectorbt param-set runs (leaderboard/robustness/walk-forward/trades/cohorts)
    - show each trade with entry/exit signal values, regime, and PnL attribution
    - add cohort views by regime and by parameter-set ID
 2. Multi-leg options realism in hybrid execution:
    - replace schedule-level proxy with leg-aware fill and lifecycle accounting for iron condor/jade lizard
 3. Promotion gate:
-   - formal rule for moving a parameter set from research to paper candidate
+   - status: implemented baseline gate with configurable thresholds + report artifact
 
 ## 12. Acceptance Criteria Before Live
 1. Strategy and risk behavior parity between backtest and paper is demonstrated.

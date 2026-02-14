@@ -13,8 +13,22 @@ from src.backtest.metrics import (
     regime_segmented_returns,
     summarize_backtest,
 )
+from src.backtest.promotion_gate import (
+    VectorBTPromotionGateConfig,
+    evaluate_vectorbt_promotion_gate,
+    parse_vectorbt_promotion_gate_config,
+)
 from src.backtest.report import write_backtest_report, write_walkforward_report
 from src.backtest.simulator import FillSimulator
+from src.backtest.vectorbt_dashboard_data import (
+    list_vectorbt_paramset_runs,
+    load_detail_artifact,
+    load_run_summary,
+    load_run_table,
+    load_walkforward_folds,
+    parse_artifact_filename,
+    parse_fold_filename,
+)
 from src.backtest.vectorbt_parameter_sets import (
     VectorBTParameterSet,
     apply_parameter_set,
@@ -31,6 +45,7 @@ from src.backtest.vectorbt_research import (
     run_vectorbt_sensitivity,
     run_vectorbt_walk_forward,
 )
+from src.backtest.vectorbt_trade_attribution import build_trade_attribution
 from src.backtest.walkforward import (
     WalkForwardWindow,
     aggregate_cross_instrument_results,
@@ -54,6 +69,9 @@ __all__ = [
     "regime_segmented_returns",
     "monte_carlo_permutation_pvalue",
     "summarize_backtest",
+    "VectorBTPromotionGateConfig",
+    "parse_vectorbt_promotion_gate_config",
+    "evaluate_vectorbt_promotion_gate",
     "write_backtest_report",
     "write_walkforward_report",
     "VectorBTResearchConfig",
@@ -65,6 +83,14 @@ __all__ = [
     "run_vectorbt_walk_forward",
     "run_hybrid_schedule_backtest",
     "run_hybrid_from_schedule",
+    "list_vectorbt_paramset_runs",
+    "load_detail_artifact",
+    "load_run_summary",
+    "load_run_table",
+    "load_walkforward_folds",
+    "parse_artifact_filename",
+    "parse_fold_filename",
+    "build_trade_attribution",
     "VectorBTFeeProfile",
     "parse_vectorbt_fee_profiles",
     "select_vectorbt_fee_profiles",

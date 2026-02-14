@@ -80,6 +80,23 @@ def test_run_vectorbt_walk_forward_returns_fold_summary():
     assert isinstance(folds, pd.DataFrame)
 
 
+def test_run_vectorbt_walk_forward_empty_has_schema_columns():
+    folds, summary = run_vectorbt_walk_forward(
+        candles=_sample_candles(),
+        snapshots=_sample_snapshots(),
+        config=VectorBTResearchConfig(adx_min=20.0),
+        start=datetime(2026, 1, 1),
+        end=datetime(2026, 1, 30),
+        train_months=12,
+        test_months=3,
+        step_months=3,
+    )
+    assert folds.empty
+    assert "fold" in folds.columns
+    assert "total_return_pct" in folds.columns
+    assert summary["folds"] == 0.0
+
+
 def test_run_hybrid_from_schedule_reuses_engine_metrics():
     schedule = build_vectorbt_schedule(
         candles=_sample_candles(),

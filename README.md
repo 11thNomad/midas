@@ -176,6 +176,9 @@ python scripts/paper_fills_report.py --symbol NIFTY
 # Generate visual regime-review artifact bundle (CSV + PNG + HTML + checklist)
 python scripts/regime_visual_review.py --symbol NIFTY --timeframe 1d --days 365
 
+# Explore vectorbt parameter-set outputs in Streamlit
+streamlit run scripts/vectorbt_paramsets_dashboard.py
+
 # Install the sample crontab (edit repo path first if needed)
 crontab config/cron/daily_maintenance.crontab.example
 ```

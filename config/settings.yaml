@@ -206,6 +206,13 @@ backtest:
       stress:
         slippage_multiplier: 2.0
         fee_multiplier: 1.5
+  vectorbt_promotion_gate:
+    enabled: true
+    min_trades_mean: 5
+    min_metric_worst: 0.0
+    min_metric_mean: 0.0
+    max_drawdown_abs_worst: 12.0
+    min_eligible_profile_share: 1.0
   stt_pct: 0.0125           # Securities Transaction Tax (sell side, options)
   exchange_txn_charges_pct: 0.053  # NSE F&O transaction charges
   gst_pct: 18.0             # GST on brokerage
