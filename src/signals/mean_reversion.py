@@ -30,6 +30,11 @@ def bollinger_percent_b(close: pd.Series, period: int = 20, std_dev: float = 2.0
     return cast(pd.Series, bb.bollinger_pband())
 
 
+def bollinger_band_width(close: pd.Series, period: int = 20, std_dev: float = 2.0) -> pd.Series:
+    bb = BollingerBands(close=close, window=period, window_dev=std_dev)
+    return cast(pd.Series, bb.bollinger_wband())
+
+
 def zscore(series: pd.Series, lookback: int = 20) -> pd.Series:
     rolling_mean = series.rolling(lookback).mean()
     rolling_std = series.rolling(lookback).std(ddof=0)

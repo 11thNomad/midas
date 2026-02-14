@@ -20,7 +20,7 @@ def _normalize_iv_chain(chain_df: pd.DataFrame) -> pd.DataFrame:
 
 def put_call_ratio(chain_df: pd.DataFrame) -> float:
     """Chain must have columns: option_type (CE/PE), oi."""
-    if chain_df.empty:
+    if chain_df.empty or not {"option_type", "oi"}.issubset(chain_df.columns):
         return 0.0
     calls = chain_df.loc[chain_df["option_type"].str.upper() == "CE", "oi"].sum()
     puts = chain_df.loc[chain_df["option_type"].str.upper() == "PE", "oi"].sum()
@@ -65,6 +65,32 @@ def total_call_put_oi(chain_df: pd.DataFrame) -> pd.Series:
     call_oi = chain_df.loc[chain_df["option_type"].str.upper() == "CE", "oi"].sum()
     put_oi = chain_df.loc[chain_df["option_type"].str.upper() == "PE", "oi"].sum()
     return pd.Series({"call_oi": float(call_oi), "put_oi": float(put_oi)})
+
+
+def oi_support_resistance(chain_df: pd.DataFrame) -> tuple[float, float]:
+    """Return (support_strike, resistance_strike) from max OI by PE/CE."""
+    required = {"strike", "option_type", "oi"}
+    if chain_df.empty or not required.issubset(chain_df.columns):
+        return 0.0, 0.0
+
+    out = chain_df.copy()
+    out["option_type"] = out["option_type"].astype(str).str.upper()
+    out["strike"] = pd.to_numeric(out["strike"], errors="coerce")
+    out["oi"] = pd.to_numeric(out["oi"], errors="coerce")
+    out = out.dropna(subset=["strike", "oi"])
+    if out.empty:
+        return 0.0, 0.0
+
+    calls = out.loc[out["option_type"] == "CE"]
+    puts = out.loc[out["option_type"] == "PE"]
+    if calls.empty or puts.empty:
+        return 0.0, 0.0
+
+    resistance_raw = calls.loc[calls["oi"].idxmax(), "strike"]
+    support_raw = puts.loc[puts["oi"].idxmax(), "strike"]
+    resistance = float(pd.to_numeric(resistance_raw, errors="coerce"))
+    support = float(pd.to_numeric(support_raw, errors="coerce"))
+    return support, resistance
 
 
 def iv_surface_change(

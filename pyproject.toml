@@ -79,7 +79,17 @@ python_version = "3.11"
 strict = true
 
 [[tool.mypy.overrides]]
-module = ["ta", "ta.*", "pyarrow", "pyarrow.*", "kiteconnect", "kiteconnect.*"]
+module = [
+    "ta",
+    "ta.*",
+    "pyarrow",
+    "pyarrow.*",
+    "kiteconnect",
+    "kiteconnect.*",
+    "mibian",
+    "vectorbt",
+    "vectorbt.*",
+]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

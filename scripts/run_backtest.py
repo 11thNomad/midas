@@ -255,6 +255,7 @@ def _run_single_backtest(
     candles: pd.DataFrame,
     vix: pd.DataFrame,
     fii: pd.DataFrame,
+    usdinr: pd.DataFrame,
     option_chain: pd.DataFrame,
     analysis_start: datetime,
     periods_per_year: int,
@@ -279,6 +280,7 @@ def _run_single_backtest(
         candles=candles,
         vix_df=vix,
         fii_df=fii,
+        usdinr_df=usdinr,
         option_chain_df=option_chain,
         analysis_start=analysis_start,
     )
@@ -297,6 +299,7 @@ def _run_walk_forward_backtest(
     candles: pd.DataFrame,
     vix: pd.DataFrame,
     fii: pd.DataFrame,
+    usdinr: pd.DataFrame,
     option_chain: pd.DataFrame,
     start: datetime,
     end: datetime,
@@ -351,6 +354,7 @@ def _run_walk_forward_backtest(
             candles=test_candles,
             vix_df=vix,
             fii_df=fii,
+            usdinr_df=usdinr,
             option_chain_df=option_chain,
             analysis_start=window.test_start,
         )
@@ -454,6 +458,7 @@ def _run_strategy(
     candles: pd.DataFrame,
     vix: pd.DataFrame,
     fii: pd.DataFrame,
+    usdinr: pd.DataFrame,
     option_chain: pd.DataFrame,
     analysis_start: datetime,
     start: datetime,
@@ -478,6 +483,7 @@ def _run_strategy(
             candles=candles,
             vix=vix,
             fii=fii,
+            usdinr=usdinr,
             option_chain=option_chain,
             start=start,
             end=end,
@@ -500,6 +506,7 @@ def _run_strategy(
         candles=candles,
         vix=vix,
         fii=fii,
+        usdinr=usdinr,
         option_chain=option_chain,
         analysis_start=analysis_start,
         periods_per_year=periods_per_year,
@@ -546,6 +553,10 @@ def main() -> int:
         start=load_start,
         end=end,
         timestamp_col="date",
+    )
+    usdinr_symbol = str(settings.get("market", {}).get("usdinr_symbol", "USDINR")).upper()
+    usdinr = store.read_time_series(
+        "candles", symbol=usdinr_symbol, timeframe="1d", start=load_start, end=end
     )
 
     simulator = FillSimulator(
@@ -625,6 +636,7 @@ def main() -> int:
                 candles=candles,
                 vix=vix,
                 fii=fii,
+                usdinr=usdinr,
                 option_chain=option_chain,
                 analysis_start=start,
                 start=start,
@@ -716,6 +728,7 @@ def main() -> int:
                     candles=candles,
                     vix=vix,
                     fii=fii,
+                    usdinr=usdinr,
                     option_chain=option_chain,
                     analysis_start=start,
                     start=start,

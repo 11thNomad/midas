@@ -205,11 +205,13 @@ Required invariant:
 ## 11. Implementation Milestones
 
 ### M1: Signal Contract Freeze
+- Status: `completed (v1.0.0 schema + DTO/frame mapper + persistence store)`
 - Finalize feature list and formulas.
 - Lock pull-vs-compute matrix.
 - Add tests for every feature function.
 
 ### M2: Feature Pipeline Hardening
+- Status: `completed (shared build_feature_context in paper/backtest)`
 - Add USD/INR ingestion.
 - Add stable FII rolling features.
 - Add mibian greeks pipeline and test vectors.
@@ -219,10 +221,12 @@ Required invariant:
 - Implement jade lizard strategy with full lifecycle tests.
 
 ### M4: VectorBT Research Layer
+- Status: `completed (research runner + walk-forward scaffolding)`
 - Add VectorBT experiment runner over feature/signal outputs.
 - Add walk-forward and sensitivity templates.
 
 ### M5: Hybrid Realistic Backtester
+- Status: `completed (vector schedule -> event-driven simulator handoff)`
 - Integrate custom options execution simulator with VectorBT schedule outputs.
 - Validate against existing event-driven backtest on overlapping scenarios.
 

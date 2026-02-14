@@ -21,6 +21,7 @@ class SignalSnapshotDTO:
     timestamp: datetime
     symbol: str
     timeframe: str
+    schema_version: str = "1.0.0"
     vix_level: float = 0.0
     vix_roc_5d: float = 0.0
     adx_14: float = 0.0
@@ -34,6 +35,14 @@ class SignalSnapshotDTO:
     bollinger_width_20_2: float = 0.0
     oi_support: float = 0.0
     oi_resistance: float = 0.0
+    iv_surface_parallel_shift: float = 0.0
+    iv_surface_tilt_change: float = 0.0
+    atm_call_delta: float = 0.0
+    atm_put_delta: float = 0.0
+    atm_gamma: float = 0.0
+    atm_theta: float = 0.0
+    atm_vega: float = 0.0
+    atm_rho: float = 0.0
     regime: str = "unknown"
     regime_confidence: float = 0.0
     source: str = "engine"
@@ -58,6 +67,7 @@ def signal_snapshot_from_mapping(payload: Mapping[str, Any]) -> SignalSnapshotDT
         raise SignalContractError("regime_confidence must be between 0.0 and 1.0")
 
     return SignalSnapshotDTO(
+        schema_version=str(payload.get("schema_version", "1.0.0")),
         timestamp=timestamp,
         symbol=symbol,
         timeframe=timeframe,
@@ -74,6 +84,14 @@ def signal_snapshot_from_mapping(payload: Mapping[str, Any]) -> SignalSnapshotDT
         bollinger_width_20_2=_to_float(payload.get("bollinger_width_20_2", 0.0)),
         oi_support=_to_float(payload.get("oi_support", 0.0)),
         oi_resistance=_to_float(payload.get("oi_resistance", 0.0)),
+        iv_surface_parallel_shift=_to_float(payload.get("iv_surface_parallel_shift", 0.0)),
+        iv_surface_tilt_change=_to_float(payload.get("iv_surface_tilt_change", 0.0)),
+        atm_call_delta=_to_float(payload.get("atm_call_delta", 0.0)),
+        atm_put_delta=_to_float(payload.get("atm_put_delta", 0.0)),
+        atm_gamma=_to_float(payload.get("atm_gamma", 0.0)),
+        atm_theta=_to_float(payload.get("atm_theta", 0.0)),
+        atm_vega=_to_float(payload.get("atm_vega", 0.0)),
+        atm_rho=_to_float(payload.get("atm_rho", 0.0)),
         regime=str(payload.get("regime", "unknown")),
         regime_confidence=confidence,
         source=str(payload.get("source", "engine")),
@@ -95,6 +113,7 @@ def signal_snapshots_from_frame(df: pd.DataFrame) -> list[SignalSnapshotDTO]:
 def frame_from_signal_snapshots(dtos: list[SignalSnapshotDTO]) -> pd.DataFrame:
     """Map DTO snapshots to a stable DataFrame schema."""
     columns = [
+        "schema_version",
         "timestamp",
         "symbol",
         "timeframe",
@@ -111,6 +130,14 @@ def frame_from_signal_snapshots(dtos: list[SignalSnapshotDTO]) -> pd.DataFrame:
         "bollinger_width_20_2",
         "oi_support",
         "oi_resistance",
+        "iv_surface_parallel_shift",
+        "iv_surface_tilt_change",
+        "atm_call_delta",
+        "atm_put_delta",
+        "atm_gamma",
+        "atm_theta",
+        "atm_vega",
+        "atm_rho",
         "regime",
         "regime_confidence",
         "source",
@@ -122,6 +149,7 @@ def frame_from_signal_snapshots(dtos: list[SignalSnapshotDTO]) -> pd.DataFrame:
         pd.DataFrame(
             [
                 {
+                    "schema_version": dto.schema_version,
                     "timestamp": dto.timestamp,
                     "symbol": dto.symbol,
                     "timeframe": dto.timeframe,
@@ -138,6 +166,14 @@ def frame_from_signal_snapshots(dtos: list[SignalSnapshotDTO]) -> pd.DataFrame:
                     "bollinger_width_20_2": dto.bollinger_width_20_2,
                     "oi_support": dto.oi_support,
                     "oi_resistance": dto.oi_resistance,
+                    "iv_surface_parallel_shift": dto.iv_surface_parallel_shift,
+                    "iv_surface_tilt_change": dto.iv_surface_tilt_change,
+                    "atm_call_delta": dto.atm_call_delta,
+                    "atm_put_delta": dto.atm_put_delta,
+                    "atm_gamma": dto.atm_gamma,
+                    "atm_theta": dto.atm_theta,
+                    "atm_vega": dto.atm_vega,
+                    "atm_rho": dto.atm_rho,
                     "regime": dto.regime,
                     "regime_confidence": dto.regime_confidence,
                     "source": dto.source,

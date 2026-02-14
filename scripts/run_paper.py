@@ -41,7 +41,7 @@ from src.regime import (
     StrategyTransitionStore,
 )
 from src.risk.circuit_breaker import CircuitBreaker
-from src.signals.regime import build_regime_signals
+from src.signals.pipeline import build_feature_context
 from src.strategies.base import BaseStrategy
 from src.strategies.iron_condor import IronCondorStrategy
 from src.strategies.jade_lizard import JadeLizardStrategy
@@ -163,6 +163,27 @@ def _load_or_fetch_fii(*, store: DataStore, start: datetime, end: datetime) -> p
         timestamp_col="date",
         source="nse",
     )
+    return fetched
+
+
+def _load_or_fetch_usdinr(
+    *,
+    store: DataStore,
+    feed: KiteFeed,
+    symbol: str,
+    start: datetime,
+    end: datetime,
+) -> pd.DataFrame:
+    usdinr = store.read_time_series("candles", symbol=symbol, timeframe="1d", start=start, end=end)
+    if not usdinr.empty:
+        return usdinr
+    try:
+        fetched = feed.get_candles(symbol=symbol, timeframe="1d", start=start, end=end)
+    except (KiteFeedError, ValueError):
+        return pd.DataFrame()
+    if fetched.empty:
+        return fetched
+    store.write_time_series("candles", fetched, symbol=symbol, timeframe="1d", source=feed.name)
     return fetched
 
 
@@ -448,6 +469,14 @@ def main() -> int:
 
             vix = _load_or_fetch_vix(store=store, feed=feed, start=start, end=loop_ts)
             fii = _load_or_fetch_fii(store=store, start=start, end=loop_ts)
+            usdinr_symbol = str(settings.get("market", {}).get("usdinr_symbol", "USDINR")).upper()
+            usdinr = _load_or_fetch_usdinr(
+                store=store,
+                feed=feed,
+                symbol=usdinr_symbol,
+                start=start,
+                end=loop_ts,
+            )
             chain_df, chain_expiry = _fetch_and_persist_option_chain(
                 store=store,
                 feed=feed,
@@ -466,20 +495,24 @@ def main() -> int:
                 if vix_series is not None and not vix_series.empty
                 else 0.0
             )
-            fii_net_3d = (
-                float(fii["fii_net"].tail(3).sum())
-                if not fii.empty and "fii_net" in fii.columns
-                else 0.0
-            )
-
-            regime_signals = build_regime_signals(
+            signal_snapshot, regime_signals = build_feature_context(
                 timestamp=loop_ts,
+                symbol=args.symbol,
+                timeframe=args.timeframe,
                 candles=candles,
                 vix_value=vix_value,
                 vix_series=vix_series,
                 chain_df=chain_df if not chain_df.empty else None,
                 previous_chain_df=previous_chain_df if not previous_chain_df.empty else None,
-                fii_net_3d=fii_net_3d,
+                fii_df=fii,
+                usdinr_close=(
+                    usdinr["close"].astype("float64")
+                    if not usdinr.empty and "close" in usdinr.columns
+                    else None
+                ),
+                regime=runtime.classifier.current_regime.value,
+                thresholds=runtime.classifier.thresholds,
+                source="paper_loop",
             )
 
             underlying_price = (
@@ -487,7 +520,10 @@ def main() -> int:
                 if not chain_df.empty and "underlying_price" in chain_df.columns
                 else float(candles["close"].iloc[-1])
             )
-            regime, transition_signals = runtime.process(regime_signals)
+            regime, transition_signals = runtime.process(
+                regime_signals,
+                signal_snapshot=signal_snapshot,
+            )
             strategy_signals = router.generate_signals(
                 market_data={
                     "timestamp": loop_ts,

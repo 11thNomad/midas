@@ -3,8 +3,10 @@
 from src.signals import (
     composite,
     contracts,
+    greeks,
     mean_reversion,
     options_signals,
+    pipeline,
     regime,
     regime_filters,
     trend,
@@ -15,8 +17,10 @@ from src.signals import (
 __all__ = [
     "composite",
     "contracts",
+    "greeks",
     "mean_reversion",
     "options_signals",
+    "pipeline",
     "regime",
     "regime_filters",
     "trend",

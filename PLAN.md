@@ -32,7 +32,7 @@
 
 ---
 
-## Current Status Checkpoint (Updated: 2026-02-13)
+## Current Status Checkpoint (Updated: 2026-02-14)
 
 ### Active Phase
 - **Current implementation phase:** Phase 6 integration (paper runtime + live-feed wiring), with Phases 1-5 implemented in code and tests.
@@ -45,8 +45,11 @@
 - [x] Phase 4 backtest stack (`scripts/run_backtest.py`) with walk-forward, anti-overfitting checks, and report generation scaffolding
 - [x] Phase 5 initial strategy set in code (`iron_condor`, `jade_lizard`, `momentum`, `regime_probe`) with unit coverage
 - [x] Signal snapshot DTO contract scaffold for backtest/paper/live feature parity (`src/signals/contracts.py`)
+- [x] Signal feature pipeline hardening (USDINR/FII rolling/OI levels/mibian greeks) shared by paper + backtest (`src/signals/pipeline.py`)
 - [x] Paper runtime scaffold (`scripts/run_paper.py`) with persisted regime snapshots/transitions
-- [x] Current automated test baseline green (`86 passed`)
+- [x] VectorBT research runner + walk-forward scaffolding (`scripts/run_vectorbt_research.py`, `src/backtest/vectorbt_research.py`)
+- [x] Hybrid schedule-to-simulator backtest bridge (`src/backtest/hybrid.py`)
+- [x] Current automated test baseline green (`109 passed`)
 
 ### Immediate TODOs (Added)
 - [x] Wire real Kite option-chain snapshots into `scripts/run_paper.py` (`chain_df` and `previous_chain_df`) and persist snapshots into cache.

@@ -51,6 +51,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--full", action="store_true", help="Use full preset for Phase 1 cache bootstrap."
     )
+    parser.add_argument(
+        "--skip-usdinr",
+        action="store_true",
+        help="Skip USDINR daily ingestion used by signal pipeline.",
+    )
     parser.add_argument("--skip-vix", action="store_true", help="Skip India VIX series download.")
     parser.add_argument("--skip-fii", action="store_true", help="Skip FII/DII flow ingest.")
     parser.add_argument(
@@ -150,6 +155,24 @@ def main() -> int:
                 "vix",
                 vix,
                 symbol="INDIAVIX",
+                timeframe="1d",
+                source=feed.name,
+            )
+            print(f"  [OK] cached rows={rows}")
+            downloads += 1
+        except (KiteFeedError, ValueError) as exc:
+            failures += 1
+            print(f"  [FAIL] {exc}")
+
+    if not args.skip_usdinr:
+        usdinr_symbol = str(settings.get("market", {}).get("usdinr_symbol", "USDINR")).upper()
+        print(f"\n[RUN] usdinr daily ({usdinr_symbol})")
+        try:
+            usdinr = feed.get_candles(symbol=usdinr_symbol, timeframe="1d", start=start, end=end)
+            rows = store.write_time_series(
+                "candles",
+                usdinr,
+                symbol=usdinr_symbol,
                 timeframe="1d",
                 source=feed.name,
             )

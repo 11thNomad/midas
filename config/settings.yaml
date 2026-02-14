@@ -19,6 +19,7 @@ market:
   exchange: NSE
   open_time: "09:15"
   close_time: "15:30"
+  usdinr_symbol: "USDINR"
   pre_open_start: "09:00"
   # Signal clocks
   decision_timeframe: "15m"       # Primary strategy decision cadence

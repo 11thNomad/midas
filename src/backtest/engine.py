@@ -13,7 +13,7 @@ from src.backtest.simulator import FillSimulator
 from src.regime.classifier import RegimeClassifier
 from src.risk.circuit_breaker import CircuitBreaker
 from src.signals.contracts import SignalSnapshotDTO, frame_from_signal_snapshots
-from src.signals.regime import build_regime_signals
+from src.signals.pipeline import build_feature_context
 from src.strategies.base import BaseStrategy, RegimeState, Signal, SignalType
 
 
@@ -47,6 +47,7 @@ class BacktestEngine:
         candles: pd.DataFrame,
         vix_df: pd.DataFrame | None = None,
         fii_df: pd.DataFrame | None = None,
+        usdinr_df: pd.DataFrame | None = None,
         option_chain_df: pd.DataFrame | None = None,
         analysis_start: datetime | None = None,
     ) -> BacktestResult:
@@ -72,6 +73,7 @@ class BacktestEngine:
         bars = bars.dropna(subset=["timestamp"]).sort_values("timestamp").reset_index(drop=True)
         vix = self._prep_vix(vix_df)
         fii = self._prep_fii(fii_df)
+        usdinr = self._prep_usdinr(usdinr_df)
         chain = self._prep_chain(option_chain_df)
 
         cash = float(self.initial_capital)
@@ -84,6 +86,7 @@ class BacktestEngine:
         regime_rows: list[dict[str, Any]] = []
         signal_snapshot_rows: list[SignalSnapshotDTO] = []
         previous_regime = self.classifier.current_regime
+        previous_chain_asof: pd.DataFrame | None = None
         analysis_cutoff = pd.Timestamp(analysis_start) if analysis_start is not None else None
 
         for i in range(len(bars)):
@@ -96,6 +99,11 @@ class BacktestEngine:
                 vix.loc[vix["timestamp"] < pd.Timestamp(ts)] if not vix.empty else pd.DataFrame()
             )
             fii_hist = fii.loc[fii["date"] < pd.Timestamp(ts)] if not fii.empty else pd.DataFrame()
+            usdinr_hist = (
+                usdinr.loc[usdinr["timestamp"] < pd.Timestamp(ts)]
+                if not usdinr.empty
+                else pd.DataFrame()
+            )
             chain_asof = self._latest_chain_asof(chain, ts, strict=True)
             mark_prices = self._build_mark_price_map(
                 chain_asof=chain_asof,
@@ -109,16 +117,29 @@ class BacktestEngine:
                 if vix_series is not None and not vix_series.empty
                 else 0.0
             )
-            fii_net_3d = float(fii_hist["fii_net"].tail(3).sum()) if not fii_hist.empty else 0.0
 
-            regime_signals = build_regime_signals(
+            signal_snapshot, regime_signals = build_feature_context(
                 timestamp=ts,
+                symbol=str(self.strategy.config.get("instrument", "NIFTY")),
+                timeframe=str(self.strategy.config.get("timeframe", "1d")),
                 candles=candles_hist,
                 vix_value=vix_value,
                 vix_series=vix_series,
-                fii_net_3d=fii_net_3d,
+                chain_df=chain_asof,
+                previous_chain_df=previous_chain_asof,
+                fii_df=fii_hist,
+                usdinr_close=(
+                    usdinr_hist["close"].astype("float64")
+                    if not usdinr_hist.empty and "close" in usdinr_hist.columns
+                    else None
+                ),
+                regime=self.classifier.current_regime.value,
+                thresholds=self.classifier.thresholds,
+                source="backtest_engine",
             )
             regime = self.classifier.classify(regime_signals)
+            if chain_asof is not None and not chain_asof.empty:
+                previous_chain_asof = chain_asof
             if analysis_cutoff is not None and pd.Timestamp(ts) < analysis_cutoff:
                 previous_regime = regime
                 continue
@@ -133,17 +154,10 @@ class BacktestEngine:
             )
             signal_snapshot_rows.append(
                 SignalSnapshotDTO(
-                    timestamp=ts,
-                    symbol=str(self.strategy.config.get("instrument", "NIFTY")),
-                    timeframe=str(self.strategy.config.get("timeframe", "1d")),
-                    vix_level=float(regime_signals.india_vix),
-                    vix_roc_5d=float(regime_signals.vix_change_5d),
-                    adx_14=float(regime_signals.adx_14),
-                    pcr_oi=float(regime_signals.pcr),
-                    fii_net_3d=float(regime_signals.fii_net_3d),
-                    regime=regime.value,
-                    regime_confidence=0.0,
-                    source="backtest_engine",
+                    **{
+                        **signal_snapshot.__dict__,
+                        "regime": regime.value,
+                    }
                 )
             )
 
@@ -309,6 +323,21 @@ class BacktestEngine:
         out["date"] = pd.to_datetime(out["date"], errors="coerce")
         out["fii_net"] = pd.to_numeric(out["fii_net"], errors="coerce")
         return out.dropna(subset=["date", "fii_net"]).sort_values("date").reset_index(drop=True)
+
+    @staticmethod
+    def _prep_usdinr(usdinr_df: pd.DataFrame | None) -> pd.DataFrame:
+        if usdinr_df is None or usdinr_df.empty:
+            return pd.DataFrame(columns=["timestamp", "close"])
+        out = usdinr_df.copy()
+        if "timestamp" not in out.columns or "close" not in out.columns:
+            return pd.DataFrame(columns=["timestamp", "close"])
+        out["timestamp"] = pd.to_datetime(out["timestamp"], errors="coerce")
+        out["close"] = pd.to_numeric(out["close"], errors="coerce")
+        return (
+            out.dropna(subset=["timestamp", "close"])
+            .sort_values("timestamp")
+            .reset_index(drop=True)
+        )
 
     @staticmethod
     def _prep_chain(chain_df: pd.DataFrame | None) -> pd.DataFrame:
