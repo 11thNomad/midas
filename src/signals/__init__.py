@@ -2,6 +2,7 @@
 
 from src.signals import (
     composite,
+    contracts,
     mean_reversion,
     options_signals,
     regime,
@@ -13,6 +14,7 @@ from src.signals import (
 
 __all__ = [
     "composite",
+    "contracts",
     "mean_reversion",
     "options_signals",
     "regime",

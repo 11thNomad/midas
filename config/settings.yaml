@@ -112,6 +112,26 @@ strategies:
     max_lots: 2
     capital_per_trade: 150000
 
+  jade_lizard:
+    enabled: false
+    instrument: NIFTY
+    active_regimes:
+      - low_vol_ranging
+      - low_vol_trending
+    variant: neutral         # neutral | bullish | bearish
+    neutral_fallback: bullish
+    call_delta: 0.15
+    put_delta: -0.15
+    spread_width: 100
+    dte_min: 5
+    dte_max: 14
+    min_entry_credit: 10.0
+    profit_target_pct: 50
+    stop_loss_pct: 100
+    dte_exit: 1
+    max_lots: 2
+    capital_per_trade: 150000
+
   credit_spread:
     enabled: false
     instrument: BANKNIFTY

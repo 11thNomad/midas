@@ -46,3 +46,16 @@ def test_build_strategies_skips_unknown_disabled_strategy():
     strategies = build_strategies(settings)
     assert len(strategies) == 1
     assert strategies[0].name == "iron_condor"
+
+
+def test_build_strategies_includes_jade_lizard_when_enabled():
+    settings = {
+        "strategies": {
+            "jade_lizard": {"enabled": True, "active_regimes": ["low_vol_ranging"]},
+            "iron_condor": {"enabled": True, "active_regimes": ["low_vol_ranging"]},
+        }
+    }
+
+    strategies = build_strategies(settings)
+    names = sorted(strategy.name for strategy in strategies)
+    assert names == ["iron_condor", "jade_lizard"]

@@ -43,6 +43,7 @@ from src.risk.circuit_breaker import CircuitBreaker
 from src.signals.regime import build_regime_signals
 from src.strategies.base import BaseStrategy
 from src.strategies.iron_condor import IronCondorStrategy
+from src.strategies.jade_lizard import JadeLizardStrategy
 from src.strategies.momentum import MomentumStrategy
 from src.strategies.regime_probe import RegimeProbeStrategy
 from src.strategies.router import StrategyRouter
@@ -81,13 +82,15 @@ def build_strategies(settings: dict) -> list[BaseStrategy]:
             strategies.append(MomentumStrategy(name=name, config=cfg))
         elif name == "iron_condor":
             strategies.append(IronCondorStrategy(name=name, config=cfg))
+        elif name == "jade_lizard":
+            strategies.append(JadeLizardStrategy(name=name, config=cfg))
         elif name == "regime_probe":
             strategies.append(RegimeProbeStrategy(name=name, config=cfg))
         else:
             unknown_enabled.append(name)
 
     if unknown_enabled:
-        known = ["regime_probe", "momentum", "iron_condor"]
+        known = ["regime_probe", "momentum", "iron_condor", "jade_lizard"]
         raise ValueError(
             "Unknown enabled strategy id(s): "
             f"{', '.join(sorted(unknown_enabled))}. "
@@ -163,14 +166,26 @@ def _load_or_fetch_fii(*, store: DataStore, start: datetime, end: datetime) -> p
 
 
 def _option_chain_dte_bounds(settings: dict) -> tuple[int, int | None]:
-    iron_cfg = settings.get("strategies", {}).get("iron_condor", {})
-    if not iron_cfg or not iron_cfg.get("enabled", False):
+    strategies_cfg = settings.get("strategies", {})
+    option_cfgs = [
+        strategies_cfg.get("iron_condor", {}),
+        strategies_cfg.get("jade_lizard", {}),
+    ]
+    enabled_cfgs = [cfg for cfg in option_cfgs if cfg and cfg.get("enabled", False)]
+    if not enabled_cfgs:
         return 0, None
-    dte_min = int(iron_cfg.get("dte_min", 5) or 5)
-    dte_max = int(iron_cfg.get("dte_max", 14) or 14)
-    if dte_min > dte_max:
-        dte_min, dte_max = dte_max, dte_min
-    return dte_min, dte_max
+
+    mins: list[int] = []
+    maxs: list[int] = []
+    for cfg in enabled_cfgs:
+        dte_min = int(cfg.get("dte_min", 5) or 5)
+        dte_max = int(cfg.get("dte_max", 14) or 14)
+        if dte_min > dte_max:
+            dte_min, dte_max = dte_max, dte_min
+        mins.append(dte_min)
+        maxs.append(dte_max)
+
+    return min(mins), max(maxs)
 
 
 def _select_target_expiry(

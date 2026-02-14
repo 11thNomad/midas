@@ -43,7 +43,8 @@
 - [x] Phase 2 signal library modules + unit tests (including IV surface change signals)
 - [x] Phase 3 baseline classifier + overrides + snapshot persistence + strategy activation router
 - [x] Phase 4 backtest stack (`scripts/run_backtest.py`) with walk-forward, anti-overfitting checks, and report generation scaffolding
-- [x] Phase 5 initial strategy set in code (`iron_condor`, `momentum`, `regime_probe`) with unit coverage
+- [x] Phase 5 initial strategy set in code (`iron_condor`, `jade_lizard`, `momentum`, `regime_probe`) with unit coverage
+- [x] Signal snapshot DTO contract scaffold for backtest/paper/live feature parity (`src/signals/contracts.py`)
 - [x] Paper runtime scaffold (`scripts/run_paper.py`) with persisted regime snapshots/transitions
 - [x] Current automated test baseline green (`86 passed`)
 

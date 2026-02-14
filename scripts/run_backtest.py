@@ -30,11 +30,19 @@ from src.data.store import DataStore
 from src.regime.classifier import RegimeClassifier, RegimeThresholds
 from src.risk.circuit_breaker import CircuitBreaker
 from src.strategies.iron_condor import IronCondorStrategy
+from src.strategies.jade_lizard import JadeLizardStrategy
 from src.strategies.momentum import MomentumStrategy
 from src.strategies.regime_probe import RegimeProbeStrategy
 
 DEFAULT_SENSITIVITY_PARAMS = {
     "iron_condor": ["call_delta", "put_delta", "wing_width", "profit_target_pct", "stop_loss_pct"],
+    "jade_lizard": [
+        "call_delta",
+        "put_delta",
+        "spread_width",
+        "profit_target_pct",
+        "stop_loss_pct",
+    ],
     "momentum": ["fast_ema", "slow_ema", "adx_filter", "atr_multiplier"],
     "regime_probe": ["lots"],
 }
@@ -73,7 +81,7 @@ def parse_args() -> argparse.Namespace:
         dest="strategies",
         help=(
             "Strategy id; repeatable or comma-separated "
-            "(available: regime_probe, momentum, iron_condor)"
+            "(available: regime_probe, momentum, iron_condor, jade_lizard)"
         ),
     )
     parser.add_argument(
@@ -160,8 +168,15 @@ def build_strategy(
         strategy = IronCondorStrategy(name=strategy_id, config=ic_cfg)
         capital = float(ic_cfg.get("capital_per_trade", 100000) or 100000)
         return strategy, capital, ic_cfg
+    if strategy_id == "jade_lizard":
+        base_cfg = settings.get("strategies", {}).get("jade_lizard", {})
+        jl_cfg = {**base_cfg, "instrument": symbol, **config_overrides}
+        strategy = JadeLizardStrategy(name=strategy_id, config=jl_cfg)
+        capital = float(jl_cfg.get("capital_per_trade", 100000) or 100000)
+        return strategy, capital, jl_cfg
     raise ValueError(
-        f"Unsupported strategy '{strategy_id}'. Available: regime_probe, momentum, iron_condor"
+        "Unsupported strategy "
+        f"'{strategy_id}'. Available: regime_probe, momentum, iron_condor, jade_lizard"
     )
 
 
