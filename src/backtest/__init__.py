@@ -9,6 +9,12 @@ from src.backtest.metrics import (
 )
 from src.backtest.report import write_backtest_report, write_walkforward_report
 from src.backtest.simulator import FillSimulator
+from src.backtest.vectorbt_parameter_sets import (
+    VectorBTParameterSet,
+    apply_parameter_set,
+    parse_parameter_sets,
+    rank_parameter_results,
+)
 from src.backtest.vectorbt_research import (
     VectorBTResearchConfig,
     VectorBTResearchResult,
@@ -53,4 +59,8 @@ __all__ = [
     "run_vectorbt_walk_forward",
     "run_hybrid_schedule_backtest",
     "run_hybrid_from_schedule",
+    "VectorBTParameterSet",
+    "parse_parameter_sets",
+    "apply_parameter_set",
+    "rank_parameter_results",
 ]

@@ -225,6 +225,12 @@ Required invariant:
 - Add VectorBT experiment runner over feature/signal outputs.
 - Add walk-forward and sensitivity templates.
 
+### M4.1: VectorBT Parameter-Set Lab
+- Status: `completed (named parameter-set catalog + batch runner + leaderboard artifacts)`
+- Maintain a versioned collection of parameter sets (`config/vectorbt_parameter_sets.yaml`).
+- Run batch comparisons and rank with eligibility filters (trade count and drawdown caps).
+- Validate selected candidates with walk-forward before paper promotion.
+
 ### M5: Hybrid Realistic Backtester
 - Status: `completed (vector schedule -> event-driven simulator handoff)`
 - Integrate custom options execution simulator with VectorBT schedule outputs.
@@ -240,6 +246,15 @@ Required invariant:
 - Paper pass criteria met (PnL stability, drawdown, fill quality, operational stability).
 - Dry-run live sessions with zero size.
 - Controlled capital ramp-up plan.
+
+## 11.1 Immediate Next Focus
+1. Trade-attribution and signal-context dashboard in Streamlit:
+   - show each trade with entry/exit signal values, regime, and PnL attribution
+   - add cohort views by regime and by parameter-set ID
+2. Multi-leg options realism in hybrid execution:
+   - replace schedule-level proxy with leg-aware fill and lifecycle accounting for iron condor/jade lizard
+3. Promotion gate:
+   - formal rule for moving a parameter set from research to paper candidate
 
 ## 12. Acceptance Criteria Before Live
 1. Strategy and risk behavior parity between backtest and paper is demonstrated.
