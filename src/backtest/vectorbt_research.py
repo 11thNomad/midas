@@ -24,6 +24,7 @@ class VectorBTResearchConfig:
     entry_regimes: tuple[str, ...] = ("low_vol_trending", "high_vol_trending")
     adx_min: float = 25.0
     vix_max: float | None = None
+    freq: str | None = None
 
 
 @dataclass
@@ -179,6 +180,7 @@ def run_vectorbt_research(
     close = indexed["close"].astype("float64")
     entries = indexed["entry"].astype(bool)
     exits = indexed["exit"].astype(bool)
+    freq = _resolve_freq(indexed.index, preferred=config.freq)
     portfolio = vbt.Portfolio.from_signals(
         close=close,
         entries=entries,
@@ -186,6 +188,7 @@ def run_vectorbt_research(
         init_cash=float(config.initial_cash),
         fees=float(config.fees_pct),
         slippage=float(config.slippage_pct),
+        freq=freq,
     )
 
     equity = portfolio.value()
@@ -268,6 +271,7 @@ def run_vectorbt_sensitivity(
                 entry_regimes=base_config.entry_regimes,
                 adx_min=adx_candidate,
                 vix_max=base_config.vix_max,
+                freq=base_config.freq,
             )
             out = run_vectorbt_research(candles=candles, snapshots=snapshots, config=cfg)
             rows.append(
@@ -299,6 +303,7 @@ def run_vectorbt_sensitivity(
             entry_regimes=base_config.entry_regimes,
             adx_min=base_config.adx_min,
             vix_max=vix_candidate,
+            freq=base_config.freq,
         )
         out = run_vectorbt_research(candles=candles, snapshots=snapshots, config=cfg)
         rows.append(
@@ -390,3 +395,29 @@ def _slice_on_timestamp(df: pd.DataFrame, *, start: datetime, end: datetime) -> 
     return out.loc[
         (out["timestamp"] >= pd.Timestamp(start)) & (out["timestamp"] < pd.Timestamp(end))
     ].reset_index(drop=True)
+
+
+def _resolve_freq(index: pd.Index, *, preferred: str | None) -> str:
+    if preferred:
+        return preferred
+    if isinstance(index, pd.DatetimeIndex):
+        inferred = pd.infer_freq(index)
+        if inferred:
+            return str(inferred)
+        if len(index) >= 2:
+            deltas = index.to_series().diff().dropna()
+            if not deltas.empty:
+                median_delta = deltas.median()
+                total_seconds = int(
+                    round(float(median_delta / pd.Timedelta(seconds=1)))
+                )
+                if total_seconds <= 0:
+                    return "1D"
+                if total_seconds % 86_400 == 0:
+                    return f"{total_seconds // 86_400}D"
+                if total_seconds % 3_600 == 0:
+                    return f"{total_seconds // 3_600}H"
+                if total_seconds % 60 == 0:
+                    return f"{total_seconds // 60}T"
+                return f"{total_seconds}S"
+    return "1D"

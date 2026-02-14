@@ -106,3 +106,14 @@ def test_run_vectorbt_sensitivity_returns_variants():
     )
     assert not out.empty
     assert "variant" in out.columns
+
+
+def test_run_vectorbt_research_handles_irregular_index_frequency():
+    candles = _sample_candles().iloc[[0, 1, 4, 7, 10]].reset_index(drop=True)
+    snapshots = _sample_snapshots().iloc[[0, 1, 4, 7, 10]].reset_index(drop=True)
+    result = run_vectorbt_research(
+        candles=candles,
+        snapshots=snapshots,
+        config=VectorBTResearchConfig(adx_min=20.0, freq=None),
+    )
+    assert "sharpe_ratio" in result.metrics

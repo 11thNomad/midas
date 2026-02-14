@@ -65,6 +65,22 @@ def resolve_output_dir(*, raw_output_dir: str, run_prefix: str) -> Path:
     return out
 
 
+def _timeframe_to_freq(timeframe: str) -> str:
+    tf = timeframe.strip().lower()
+    mapping = {
+        "1d": "1D",
+        "1h": "1H",
+        "60m": "1H",
+        "30m": "30T",
+        "15m": "15T",
+        "10m": "10T",
+        "5m": "5T",
+        "3m": "3T",
+        "1m": "1T",
+    }
+    return mapping.get(tf, "1D")
+
+
 def main() -> int:
     args = parse_args()
     settings = load_settings(args.settings)
@@ -144,6 +160,7 @@ def main() -> int:
         entry_regimes=entry_regimes,
         adx_min=float(args.adx_min),
         vix_max=args.vix_max,
+        freq=_timeframe_to_freq(args.timeframe),
     )
 
     out_dir = resolve_output_dir(raw_output_dir=args.output_dir, run_prefix="vectorbt")
