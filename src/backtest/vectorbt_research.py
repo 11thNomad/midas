@@ -9,6 +9,7 @@ from typing import Any, cast
 
 import pandas as pd
 
+from src.backtest.engine import BacktestResult
 from src.backtest.hybrid import HybridConfig, run_hybrid_schedule_backtest
 from src.backtest.simulator import FillSimulator
 from src.backtest.walkforward import aggregate_walk_forward_metrics, generate_walk_forward_windows
@@ -355,7 +356,37 @@ def run_hybrid_from_schedule(
     usdinr_df: pd.DataFrame | None = None,
     option_chain_df: pd.DataFrame | None = None,
 ) -> dict[str, float]:
-    result = run_hybrid_schedule_backtest(
+    result = run_hybrid_from_schedule_result(
+        candles=candles,
+        schedule=schedule,
+        symbol=symbol,
+        timeframe=timeframe,
+        initial_capital=initial_capital,
+        thresholds=thresholds,
+        simulator=simulator,
+        vix_df=vix_df,
+        fii_df=fii_df,
+        usdinr_df=usdinr_df,
+        option_chain_df=option_chain_df,
+    )
+    return result.metrics
+
+
+def run_hybrid_from_schedule_result(
+    *,
+    candles: pd.DataFrame,
+    schedule: pd.DataFrame,
+    symbol: str,
+    timeframe: str,
+    initial_capital: float,
+    thresholds: RegimeThresholds,
+    simulator: FillSimulator,
+    vix_df: pd.DataFrame | None = None,
+    fii_df: pd.DataFrame | None = None,
+    usdinr_df: pd.DataFrame | None = None,
+    option_chain_df: pd.DataFrame | None = None,
+) -> BacktestResult:
+    return run_hybrid_schedule_backtest(
         candles=candles,
         schedule=schedule,
         config=HybridConfig(
@@ -371,7 +402,6 @@ def run_hybrid_from_schedule(
         usdinr_df=usdinr_df,
         option_chain_df=option_chain_df,
     )
-    return result.metrics
 
 
 def _as_float(value: Any) -> float:

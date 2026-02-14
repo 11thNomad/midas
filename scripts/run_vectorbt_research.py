@@ -20,7 +20,7 @@ from src.backtest import (
     build_snapshots_from_market_data,
     parse_vectorbt_fee_profiles,
     resolve_vectorbt_costs,
-    run_hybrid_from_schedule,
+    run_hybrid_from_schedule_result,
     run_vectorbt_research,
     run_vectorbt_sensitivity,
     run_vectorbt_walk_forward,
@@ -270,7 +270,7 @@ def main() -> int:
             sebi_fee_pct=float(backtest_cfg.get("sebi_fee_pct", 0.0001) or 0.0001),
             stamp_duty_pct=float(backtest_cfg.get("stamp_duty_pct", 0.003) or 0.003),
         )
-        hybrid_metrics = run_hybrid_from_schedule(
+        hybrid_result = run_hybrid_from_schedule_result(
             candles=candles,
             schedule=result.schedule,
             symbol=args.symbol,
@@ -285,9 +285,22 @@ def main() -> int:
             usdinr_df=usdinr,
             option_chain_df=option_chain,
         )
+        hybrid_metrics = hybrid_result.metrics
         hybrid_path = out_dir / "hybrid_metrics.json"
+        hybrid_equity_path = out_dir / "hybrid_equity.csv"
+        hybrid_fills_path = out_dir / "hybrid_fills.csv"
+        hybrid_regimes_path = out_dir / "hybrid_regimes.csv"
+        hybrid_snapshots_path = out_dir / "hybrid_signal_snapshots.csv"
         hybrid_path.write_text(json.dumps(hybrid_metrics, indent=2, sort_keys=True))
+        hybrid_result.equity_curve.to_csv(hybrid_equity_path, index=False)
+        hybrid_result.fills.to_csv(hybrid_fills_path, index=False)
+        hybrid_result.regimes.to_csv(hybrid_regimes_path, index=False)
+        hybrid_result.signal_snapshots.to_csv(hybrid_snapshots_path, index=False)
         print(f"hybrid_metrics={hybrid_path}")
+        print(f"hybrid_equity={hybrid_equity_path}")
+        print(f"hybrid_fills={hybrid_fills_path}")
+        print(f"hybrid_regimes={hybrid_regimes_path}")
+        print(f"hybrid_signal_snapshots={hybrid_snapshots_path}")
 
     return 0
 

@@ -10,21 +10,3 @@ parameter_sets:
     entry_regimes: [low_vol_trending]
     adx_min: 28.0
     vix_max: 17.0
-
-  - id: balanced_vix_cap
-    notes: "Balanced ADX with moderate VIX cap."
-    entry_regimes: [low_vol_trending, high_vol_trending]
-    adx_min: 24.0
-    vix_max: 18.0
-
-  - id: low_vol_focus
-    notes: "Restrict to low-vol regimes only."
-    entry_regimes: [low_vol_ranging, low_vol_trending]
-    adx_min: 20.0
-    vix_max: 16.5
-
-  - id: aggressive_trend
-    notes: "Lower ADX gate, broader regime access."
-    entry_regimes: [low_vol_ranging, low_vol_trending, high_vol_trending]
-    adx_min: 18.0
-    vix_max: 20.0

@@ -10,6 +10,7 @@ from src.backtest.vectorbt_research import (
     VectorBTResearchConfig,
     build_vectorbt_schedule,
     run_hybrid_from_schedule,
+    run_hybrid_from_schedule_result,
     run_vectorbt_research,
     run_vectorbt_sensitivity,
     run_vectorbt_walk_forward,
@@ -113,6 +114,26 @@ def test_run_hybrid_from_schedule_reuses_engine_metrics():
         simulator=FillSimulator(slippage_pct=0.0, commission_per_order=0.0),
     )
     assert "final_equity" in metrics
+
+
+def test_run_hybrid_from_schedule_result_returns_artifacts():
+    schedule = build_vectorbt_schedule(
+        candles=_sample_candles(),
+        snapshots=_sample_snapshots(),
+        config=VectorBTResearchConfig(adx_min=20.0),
+    )
+    result = run_hybrid_from_schedule_result(
+        candles=_sample_candles(),
+        schedule=schedule,
+        symbol="NIFTY",
+        timeframe="1d",
+        initial_capital=1000.0,
+        thresholds=RegimeThresholds(),
+        simulator=FillSimulator(slippage_pct=0.0, commission_per_order=0.0),
+    )
+    assert "final_equity" in result.metrics
+    assert isinstance(result.equity_curve, pd.DataFrame)
+    assert isinstance(result.fills, pd.DataFrame)
 
 
 def test_run_vectorbt_sensitivity_returns_variants():
