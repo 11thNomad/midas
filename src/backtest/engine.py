@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, cast
 
@@ -12,6 +12,7 @@ from src.backtest.metrics import summarize_backtest
 from src.backtest.simulator import FillSimulator
 from src.regime.classifier import RegimeClassifier
 from src.risk.circuit_breaker import CircuitBreaker
+from src.signals.contracts import SignalSnapshotDTO, frame_from_signal_snapshots
 from src.signals.regime import build_regime_signals
 from src.strategies.base import BaseStrategy, RegimeState, Signal, SignalType
 
@@ -22,6 +23,7 @@ class BacktestResult:
     fills: pd.DataFrame
     regimes: pd.DataFrame
     metrics: dict[str, float]
+    signal_snapshots: pd.DataFrame = field(default_factory=pd.DataFrame)
 
 
 @dataclass
@@ -54,6 +56,7 @@ class BacktestEngine:
                 equity_curve=empty,
                 fills=empty,
                 regimes=empty,
+                signal_snapshots=empty,
                 metrics=summarize_backtest(
                     equity_curve=empty,
                     fills=empty,
@@ -79,6 +82,7 @@ class BacktestEngine:
         fill_rows: list[dict[str, Any]] = []
         equity_rows: list[dict[str, Any]] = []
         regime_rows: list[dict[str, Any]] = []
+        signal_snapshot_rows: list[SignalSnapshotDTO] = []
         previous_regime = self.classifier.current_regime
         analysis_cutoff = pd.Timestamp(analysis_start) if analysis_start is not None else None
 
@@ -126,6 +130,21 @@ class BacktestEngine:
                     "vix": regime_signals.india_vix,
                     "adx": regime_signals.adx_14,
                 }
+            )
+            signal_snapshot_rows.append(
+                SignalSnapshotDTO(
+                    timestamp=ts,
+                    symbol=str(self.strategy.config.get("instrument", "NIFTY")),
+                    timeframe=str(self.strategy.config.get("timeframe", "1d")),
+                    vix_level=float(regime_signals.india_vix),
+                    vix_roc_5d=float(regime_signals.vix_change_5d),
+                    adx_14=float(regime_signals.adx_14),
+                    pcr_oi=float(regime_signals.pcr),
+                    fii_net_3d=float(regime_signals.fii_net_3d),
+                    regime=regime.value,
+                    regime_confidence=0.0,
+                    source="backtest_engine",
+                )
             )
 
             signal = self._next_signal(
@@ -220,6 +239,7 @@ class BacktestEngine:
         fills_df = pd.DataFrame(fill_rows)
         equity_df = pd.DataFrame(equity_rows)
         regimes_df = pd.DataFrame(regime_rows)
+        signal_snapshots_df = frame_from_signal_snapshots(signal_snapshot_rows)
         metrics = summarize_backtest(
             equity_curve=equity_df,
             fills=fills_df,
@@ -230,7 +250,11 @@ class BacktestEngine:
             minimum_trade_count=self.minimum_trade_count,
         )
         return BacktestResult(
-            equity_curve=equity_df, fills=fills_df, regimes=regimes_df, metrics=metrics
+            equity_curve=equity_df,
+            fills=fills_df,
+            regimes=regimes_df,
+            signal_snapshots=signal_snapshots_df,
+            metrics=metrics,
         )
 
     def _next_signal(

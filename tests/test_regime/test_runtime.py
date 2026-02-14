@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from src.regime.classifier import RegimeClassifier, RegimeSignals, RegimeThresholds
-from src.regime.persistence import RegimeSnapshotStore, StrategyTransitionStore
+from src.regime.persistence import RegimeSnapshotStore, SignalSnapshotStore, StrategyTransitionStore
 from src.regime.runtime import RegimeRuntime
 from src.strategies.base import BaseStrategy, RegimeState, Signal, SignalType
 from src.strategies.router import StrategyRouter
@@ -35,13 +35,16 @@ def test_runtime_process_routes_and_persists_snapshot(tmp_path):
     strategy.state.is_active = False
     router = StrategyRouter(strategies=[strategy])
     store = RegimeSnapshotStore(base_dir=str(tmp_path / "cache"))
+    signal_store = SignalSnapshotStore(base_dir=str(tmp_path / "cache"))
     transition_store = StrategyTransitionStore(base_dir=str(tmp_path / "cache"))
     runtime = RegimeRuntime(
         classifier=classifier,
         router=router,
         snapshot_store=store,
+        signal_snapshot_store=signal_store,
         transition_store=transition_store,
         symbol="NIFTY",
+        timeframe="15m",
     )
 
     signals = RegimeSignals(
@@ -58,6 +61,11 @@ def test_runtime_process_routes_and_persists_snapshot(tmp_path):
     persisted = store.read_snapshots(symbol="NIFTY")
     assert len(persisted) == 1
     assert persisted.loc[0, "regime"] == RegimeState.LOW_VOL_TRENDING.value
+    signal_persisted = signal_store.read_snapshots(symbol="NIFTY", timeframe="15m")
+    assert len(signal_persisted) == 1
+    assert signal_persisted.loc[0, "symbol"] == "NIFTY"
+    assert signal_persisted.loc[0, "timeframe"] == "15m"
+    assert signal_persisted.loc[0, "regime"] == RegimeState.LOW_VOL_TRENDING.value
 
     transitions = transition_store.read_transitions(symbol="NIFTY")
     assert len(transitions) == 1

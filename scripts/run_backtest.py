@@ -142,6 +142,7 @@ def build_strategy(
     *,
     settings: dict,
     symbol: str,
+    timeframe: str = "1d",
     config_overrides: dict | None = None,
 ):
     config_overrides = config_overrides or {}
@@ -150,6 +151,7 @@ def build_strategy(
         probe_cfg = {
             **base_cfg,
             "instrument": symbol,
+            "timeframe": timeframe,
             "lots": base_cfg.get("max_lots", 1),
             **config_overrides,
         }
@@ -158,19 +160,24 @@ def build_strategy(
         return strategy, capital, probe_cfg
     if strategy_id == "momentum":
         base_cfg = settings.get("strategies", {}).get("momentum", {})
-        momentum_cfg = {**base_cfg, "instrument": symbol, **config_overrides}
+        momentum_cfg = {
+            **base_cfg,
+            "instrument": symbol,
+            "timeframe": timeframe,
+            **config_overrides,
+        }
         strategy = MomentumStrategy(name=strategy_id, config=momentum_cfg)
         capital = float(momentum_cfg.get("capital_per_trade", 200000) or 200000)
         return strategy, capital, momentum_cfg
     if strategy_id == "iron_condor":
         base_cfg = settings.get("strategies", {}).get("iron_condor", {})
-        ic_cfg = {**base_cfg, "instrument": symbol, **config_overrides}
+        ic_cfg = {**base_cfg, "instrument": symbol, "timeframe": timeframe, **config_overrides}
         strategy = IronCondorStrategy(name=strategy_id, config=ic_cfg)
         capital = float(ic_cfg.get("capital_per_trade", 100000) or 100000)
         return strategy, capital, ic_cfg
     if strategy_id == "jade_lizard":
         base_cfg = settings.get("strategies", {}).get("jade_lizard", {})
-        jl_cfg = {**base_cfg, "instrument": symbol, **config_overrides}
+        jl_cfg = {**base_cfg, "instrument": symbol, "timeframe": timeframe, **config_overrides}
         strategy = JadeLizardStrategy(name=strategy_id, config=jl_cfg)
         capital = float(jl_cfg.get("capital_per_trade", 100000) or 100000)
         return strategy, capital, jl_cfg
@@ -301,6 +308,7 @@ def _run_walk_forward_backtest(
     output_dir: str,
     run_name: str,
     write_report: bool,
+    timeframe: str,
     indicator_warmup_days: int = 0,
 ) -> tuple[dict[str, float], dict[str, str]]:
     windows = generate_walk_forward_windows(
@@ -317,7 +325,7 @@ def _run_walk_forward_backtest(
     fold_regime_rows: list[pd.DataFrame] = []
     for i, window in enumerate(windows, start=1):
         strategy_fold, capital_fold, _ = build_strategy(
-            strategy_id, settings=settings, symbol=symbol
+            strategy_id, settings=settings, symbol=symbol, timeframe=timeframe
         )
         engine = _build_engine(
             settings=settings,
@@ -458,6 +466,7 @@ def _run_strategy(
     output_dir: str,
     run_name: str,
     write_report: bool,
+    timeframe: str,
     indicator_warmup_days: int = 0,
 ) -> tuple[dict[str, float], dict[str, str]]:
     if walk_forward:
@@ -480,6 +489,7 @@ def _run_strategy(
             output_dir=output_dir,
             run_name=run_name,
             write_report=write_report,
+            timeframe=timeframe,
             indicator_warmup_days=indicator_warmup_days,
         )
     return _run_single_backtest(
@@ -596,7 +606,7 @@ def main() -> int:
 
         for strategy_id in strategy_ids:
             strategy, initial_capital, strategy_cfg = build_strategy(
-                strategy_id, settings=settings, symbol=symbol
+                strategy_id, settings=settings, symbol=symbol, timeframe=args.timeframe
             )
             run_suffix = "walkforward" if args.walk_forward else "backtest"
             run_name = (
@@ -627,6 +637,7 @@ def main() -> int:
                 output_dir=output_dir,
                 run_name=run_name,
                 write_report=True,
+                timeframe=args.timeframe,
                 indicator_warmup_days=max(int(args.indicator_warmup_days), 0),
             )
             runs_completed += 1
@@ -691,6 +702,7 @@ def main() -> int:
                     strategy_id,
                     settings=settings,
                     symbol=symbol,
+                    timeframe=args.timeframe,
                     config_overrides=variant["overrides"],
                 )
                 variant_metrics, _ = _run_strategy(
@@ -716,6 +728,7 @@ def main() -> int:
                     output_dir=output_dir,
                     run_name=f"{run_name}_sens_{variant['variant_id']}",
                     write_report=False,
+                    timeframe=args.timeframe,
                     indicator_warmup_days=max(int(args.indicator_warmup_days), 0),
                 )
                 variant_rows.append(

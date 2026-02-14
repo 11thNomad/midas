@@ -101,6 +101,8 @@ def test_engine_runs_and_produces_equity_and_fills():
 
     assert len(result.equity_curve) == 5
     assert len(result.fills) >= 2
+    assert len(result.signal_snapshots) == 5
+    assert set(result.signal_snapshots["symbol"]) == {"NIFTY"}
     assert "final_equity" in result.metrics
 
 

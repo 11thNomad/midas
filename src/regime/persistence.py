@@ -9,6 +9,7 @@ from typing import Any
 import pandas as pd
 
 from src.data.store import DataStore
+from src.signals.contracts import SignalSnapshotDTO, frame_from_signal_snapshots
 
 
 @dataclass
@@ -129,6 +130,77 @@ class StrategyTransitionStore:
         return self._store.read_time_series(
             self.dataset,
             symbol=symbol,
+            start=start,
+            end=end,
+            timestamp_col="timestamp",
+        )
+
+
+@dataclass
+class SignalSnapshotStore:
+    """Write/read normalized signal snapshots for backtest/paper/live parity."""
+
+    base_dir: str = "data/cache"
+    dataset: str = "signal_snapshots"
+    _store: DataStore = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self._store = DataStore(base_dir=self.base_dir)
+
+    def persist_snapshot(
+        self,
+        snapshot: SignalSnapshotDTO,
+        *,
+        symbol: str = "NIFTY",
+        timeframe: str = "1d",
+        source: str = "signal_contract",
+    ) -> int:
+        frame = frame_from_signal_snapshots([snapshot])
+        if frame.empty:
+            return 0
+        return self._store.write_time_series(
+            self.dataset,
+            frame,
+            symbol=symbol,
+            timeframe=timeframe,
+            timestamp_col="timestamp",
+            source=source,
+        )
+
+    def persist_snapshots(
+        self,
+        snapshots: list[SignalSnapshotDTO],
+        *,
+        symbol: str = "NIFTY",
+        timeframe: str = "1d",
+        source: str = "signal_contract",
+    ) -> int:
+        if not snapshots:
+            return 0
+        frame = frame_from_signal_snapshots(snapshots)
+        if frame.empty:
+            return 0
+        return self._store.write_time_series(
+            self.dataset,
+            frame,
+            symbol=symbol,
+            timeframe=timeframe,
+            timestamp_col="timestamp",
+            source=source,
+        )
+
+    def read_snapshots(
+        self,
+        *,
+        symbol: str = "NIFTY",
+        timeframe: str = "1d",
+        start: datetime | None = None,
+        end: datetime | None = None,
+    ) -> pd.DataFrame:
+        return self._store.read_time_series(
+            self.dataset,
+            symbol=symbol,
+            timeframe=timeframe,
             start=start,
             end=end,
             timestamp_col="timestamp",

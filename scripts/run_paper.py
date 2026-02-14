@@ -37,6 +37,7 @@ from src.regime import (
     RegimeRuntime,
     RegimeSnapshotStore,
     RegimeThresholds,
+    SignalSnapshotStore,
     StrategyTransitionStore,
 )
 from src.risk.circuit_breaker import CircuitBreaker
@@ -383,8 +384,10 @@ def main() -> int:
         classifier=classifier,
         router=router,
         snapshot_store=RegimeSnapshotStore(base_dir=str(cache_dir)),
+        signal_snapshot_store=SignalSnapshotStore(base_dir=str(cache_dir)),
         transition_store=StrategyTransitionStore(base_dir=str(cache_dir)),
         symbol=args.symbol,
+        timeframe=args.timeframe,
     )
     backtest_cfg = settings.get("backtest", {})
     risk_cfg = settings.get("risk", {})
@@ -527,7 +530,7 @@ def main() -> int:
         if i < args.iterations - 1:
             time.sleep(args.sleep_seconds)
 
-    print("Done. Regime snapshots and strategy transitions persisted to parquet cache.")
+    print("Done. Regime snapshots, signal snapshots, and strategy transitions persisted.")
     return 0
 
 
