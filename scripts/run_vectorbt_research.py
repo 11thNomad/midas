@@ -18,10 +18,13 @@ from src.backtest import (
     FillSimulator,
     VectorBTResearchConfig,
     build_snapshots_from_market_data,
+    parse_vectorbt_fee_profiles,
+    resolve_vectorbt_costs,
     run_hybrid_from_schedule,
     run_vectorbt_research,
     run_vectorbt_sensitivity,
     run_vectorbt_walk_forward,
+    select_vectorbt_fee_profiles,
 )
 from src.data.store import DataStore
 from src.regime.classifier import RegimeThresholds
@@ -45,6 +48,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--vix-max", type=float, default=None)
     parser.add_argument("--walk-forward", action="store_true")
     parser.add_argument("--hybrid", action="store_true")
+    parser.add_argument(
+        "--fee-profile",
+        default=None,
+        help=(
+            "Fee profile name from settings backtest.vectorbt_fee_profiles "
+            "(default: settings default)."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -91,6 +102,13 @@ def main() -> int:
     backtest_cfg = settings.get("backtest", {})
     start = args.start or parse_date(backtest_cfg.get("start_date", "2022-01-01"))
     end = args.end or parse_date(backtest_cfg.get("end_date", "2025-12-31"))
+    default_fee_profile, fee_profiles = parse_vectorbt_fee_profiles(backtest_cfg)
+    selected_name = args.fee_profile or default_fee_profile
+    selected = select_vectorbt_fee_profiles(fee_profiles, selected_name)
+    if len(selected) != 1:
+        raise ValueError("run_vectorbt_research accepts exactly one fee profile.")
+    fee_profile = selected[0]
+    fees_pct, slippage_pct = resolve_vectorbt_costs(backtest_cfg=backtest_cfg, profile=fee_profile)
 
     candles = store.read_time_series(
         "candles",
@@ -155,12 +173,16 @@ def main() -> int:
     entry_regimes = tuple(r.strip() for r in args.entry_regimes.split(",") if r.strip())
     cfg = VectorBTResearchConfig(
         initial_cash=float(settings.get("risk", {}).get("initial_capital", 150_000.0) or 150_000.0),
-        fees_pct=float(backtest_cfg.get("slippage_pct", 0.05) or 0.05) / 100.0,
-        slippage_pct=float(backtest_cfg.get("slippage_pct", 0.05) or 0.05) / 100.0,
+        fees_pct=fees_pct,
+        slippage_pct=slippage_pct,
         entry_regimes=entry_regimes,
         adx_min=float(args.adx_min),
         vix_max=args.vix_max,
         freq=_timeframe_to_freq(args.timeframe),
+    )
+    print(
+        f"fee_profile={fee_profile.name} fees_pct={cfg.fees_pct:.6f} "
+        f"slippage_pct={cfg.slippage_pct:.6f}"
     )
 
     out_dir = resolve_output_dir(raw_output_dir=args.output_dir, run_prefix="vectorbt")

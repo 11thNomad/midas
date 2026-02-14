@@ -1,6 +1,12 @@
 """Backtest layer exports."""
 
 from src.backtest.engine import BacktestEngine, BacktestResult
+from src.backtest.fee_profiles import (
+    VectorBTFeeProfile,
+    parse_vectorbt_fee_profiles,
+    resolve_vectorbt_costs,
+    select_vectorbt_fee_profiles,
+)
 from src.backtest.hybrid import HybridConfig, run_hybrid_schedule_backtest
 from src.backtest.metrics import (
     monte_carlo_permutation_pvalue,
@@ -59,6 +65,10 @@ __all__ = [
     "run_vectorbt_walk_forward",
     "run_hybrid_schedule_backtest",
     "run_hybrid_from_schedule",
+    "VectorBTFeeProfile",
+    "parse_vectorbt_fee_profiles",
+    "select_vectorbt_fee_profiles",
+    "resolve_vectorbt_costs",
     "VectorBTParameterSet",
     "parse_parameter_sets",
     "apply_parameter_set",

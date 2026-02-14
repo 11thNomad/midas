@@ -193,6 +193,19 @@ backtest:
     params_by_strategy:
       iron_condor: [call_delta, put_delta, wing_width]
       momentum: [fast_ema, slow_ema, atr_multiplier]
+  vectorbt_fees_pct: 0.05   # Base vectorbt fee % (if omitted, slippage_pct is reused)
+  vectorbt_fee_profiles:
+    default: base
+    profiles:
+      base:
+        slippage_multiplier: 1.0
+        fee_multiplier: 1.0
+      penalized:
+        slippage_multiplier: 1.5
+        fee_multiplier: 1.25
+      stress:
+        slippage_multiplier: 2.0
+        fee_multiplier: 1.5
   stt_pct: 0.0125           # Securities Transaction Tax (sell side, options)
   exchange_txn_charges_pct: 0.053  # NSE F&O transaction charges
   gst_pct: 18.0             # GST on brokerage

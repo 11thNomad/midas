@@ -21,9 +21,12 @@ from src.backtest import (
     apply_parameter_set,
     build_snapshots_from_market_data,
     parse_parameter_sets,
+    parse_vectorbt_fee_profiles,
     rank_parameter_results,
+    resolve_vectorbt_costs,
     run_vectorbt_research,
     run_vectorbt_walk_forward,
+    select_vectorbt_fee_profiles,
 )
 from src.data.store import DataStore
 from src.regime.classifier import RegimeThresholds
@@ -44,6 +47,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--parameter-sets", default="config/vectorbt_parameter_sets.yaml")
     parser.add_argument("--output-dir", default="data/reports")
     parser.add_argument("--walk-forward", action="store_true")
+    parser.add_argument(
+        "--fee-profiles",
+        default=None,
+        help=(
+            "Comma-separated fee profiles from settings "
+            "backtest.vectorbt_fee_profiles (default: run all configured profiles)."
+        ),
+    )
     parser.add_argument(
         "--rank-by",
         default=None,
@@ -115,10 +126,61 @@ def _as_float(value: Any) -> float:
     return out if math.isfinite(out) else float("nan")
 
 
+def summarize_set_robustness(leaderboard: pd.DataFrame, *, walk_forward: bool) -> pd.DataFrame:
+    if leaderboard.empty:
+        return leaderboard
+    metric = "wf_total_return_pct_mean" if walk_forward else "total_return_pct"
+    if metric not in leaderboard.columns:
+        metric = "total_return_pct"
+
+    frame = leaderboard.copy()
+    frame[metric] = pd.to_numeric(frame.get(metric), errors="coerce")
+    if "max_drawdown_pct" in frame.columns:
+        frame["max_drawdown_pct"] = pd.to_numeric(frame["max_drawdown_pct"], errors="coerce")
+    frame["eligible"] = frame["eligible"].astype(bool)
+
+    grouped = frame.groupby("set_id", as_index=False).agg(
+        profiles_tested=("fee_profile", "nunique"),
+        eligible_profiles=("eligible", "sum"),
+        metric_mean=(metric, "mean"),
+        metric_median=(metric, "median"),
+        metric_worst=(metric, "min"),
+        metric_best=(metric, "max"),
+        trades_mean=("trades", "mean"),
+    )
+    grouped["eligible_profile_share"] = (
+        grouped["eligible_profiles"] / grouped["profiles_tested"].replace(0, pd.NA)
+    )
+
+    if "max_drawdown_pct" in frame.columns:
+        drawdown_abs = frame.assign(max_drawdown_abs=frame["max_drawdown_pct"].abs())
+        dd_summary = drawdown_abs.groupby("set_id", as_index=False).agg(
+            drawdown_abs_mean=("max_drawdown_abs", "mean"),
+            drawdown_abs_worst=("max_drawdown_abs", "max"),
+        )
+        grouped = grouped.merge(dd_summary, on="set_id", how="left")
+
+    return grouped.sort_values(
+        by=["eligible_profile_share", "metric_worst", "metric_mean", "set_id"],
+        ascending=[False, False, False, True],
+        na_position="last",
+    ).reset_index(drop=True)
+
+
 def main() -> int:
     args = parse_args()
     settings = load_settings(args.settings)
     backtest_cfg = settings.get("backtest", {})
+    default_fee_profile, all_fee_profiles = parse_vectorbt_fee_profiles(backtest_cfg)
+    selected_profiles = select_vectorbt_fee_profiles(
+        all_fee_profiles,
+        args.fee_profiles if args.fee_profiles is not None else None,
+    )
+    if args.fee_profiles is None:
+        selected_profiles = all_fee_profiles
+    if not selected_profiles:
+        raise ValueError(f"No fee profiles selected (default={default_fee_profile}).")
+
     start = args.start or parse_date(str(backtest_cfg.get("start_date", "2022-01-01")))
     end = args.end or parse_date(str(backtest_cfg.get("end_date", "2025-12-31")))
 
@@ -188,8 +250,8 @@ def main() -> int:
 
     base_config = VectorBTResearchConfig(
         initial_cash=float(settings.get("risk", {}).get("initial_capital", 150_000.0) or 150_000.0),
-        fees_pct=float(backtest_cfg.get("slippage_pct", 0.05) or 0.05) / 100.0,
-        slippage_pct=float(backtest_cfg.get("slippage_pct", 0.05) or 0.05) / 100.0,
+        fees_pct=0.0,
+        slippage_pct=0.0,
         entry_regimes=("low_vol_trending", "high_vol_trending"),
         adx_min=25.0,
         vix_max=None,
@@ -197,39 +259,62 @@ def main() -> int:
     )
 
     rows: list[dict[str, Any]] = []
-    for params in param_sets:
-        cfg = apply_parameter_set(base_config, params)
-        run = run_vectorbt_research(candles=candles, snapshots=snapshots, config=cfg)
-        row: dict[str, Any] = {
-            "set_id": params.set_id,
-            "entry_regimes": ",".join(params.entry_regimes),
-            "adx_min": float(params.adx_min),
-            "vix_max": float(params.vix_max) if params.vix_max is not None else float("nan"),
-            "notes": params.notes,
-        }
-        row.update({key: _as_float(value) for key, value in run.metrics.items()})
-
-        if args.walk_forward:
-            folds, wf_summary = run_vectorbt_walk_forward(
-                candles=candles,
-                snapshots=snapshots,
-                config=cfg,
-                start=start,
-                end=end,
-                train_months=int(backtest_cfg.get("train_months", 12)),
-                test_months=int(backtest_cfg.get("test_months", 3)),
-                step_months=int(backtest_cfg.get("step_months", 3)),
-            )
-            folds_path = out_dir / f"{params.set_id}_walkforward_folds.csv"
-            folds.to_csv(folds_path, index=False)
-            for key, value in wf_summary.items():
-                row[f"wf_{key}"] = _as_float(value)
-
-        rows.append(row)
-        print(
-            f"set={params.set_id} trades={row.get('trades')} "
-            f"return={row.get('total_return_pct')}"
+    for fee_profile in selected_profiles:
+        fees_pct, slippage_pct = resolve_vectorbt_costs(
+            backtest_cfg=backtest_cfg,
+            profile=fee_profile,
         )
+        print(
+            f"fee_profile={fee_profile.name} fees_pct={fees_pct:.6f} "
+            f"slippage_pct={slippage_pct:.6f}"
+        )
+        for params in param_sets:
+            cfg = apply_parameter_set(base_config, params)
+            cfg = VectorBTResearchConfig(
+                initial_cash=cfg.initial_cash,
+                fees_pct=fees_pct,
+                slippage_pct=slippage_pct,
+                entry_regimes=cfg.entry_regimes,
+                adx_min=cfg.adx_min,
+                vix_max=cfg.vix_max,
+                freq=cfg.freq,
+            )
+            run = run_vectorbt_research(candles=candles, snapshots=snapshots, config=cfg)
+            row: dict[str, Any] = {
+                "set_id": params.set_id,
+                "fee_profile": fee_profile.name,
+                "fee_multiplier": float(fee_profile.fee_multiplier),
+                "slippage_multiplier": float(fee_profile.slippage_multiplier),
+                "fees_pct_applied": float(fees_pct),
+                "slippage_pct_applied": float(slippage_pct),
+                "entry_regimes": ",".join(params.entry_regimes),
+                "adx_min": float(params.adx_min),
+                "vix_max": float(params.vix_max) if params.vix_max is not None else float("nan"),
+                "notes": params.notes,
+            }
+            row.update({key: _as_float(value) for key, value in run.metrics.items()})
+
+            if args.walk_forward:
+                folds, wf_summary = run_vectorbt_walk_forward(
+                    candles=candles,
+                    snapshots=snapshots,
+                    config=cfg,
+                    start=start,
+                    end=end,
+                    train_months=int(backtest_cfg.get("train_months", 12)),
+                    test_months=int(backtest_cfg.get("test_months", 3)),
+                    step_months=int(backtest_cfg.get("step_months", 3)),
+                )
+                folds_path = out_dir / f"{params.set_id}_{fee_profile.name}_walkforward_folds.csv"
+                folds.to_csv(folds_path, index=False)
+                for key, value in wf_summary.items():
+                    row[f"wf_{key}"] = _as_float(value)
+
+            rows.append(row)
+            print(
+                f"set={params.set_id} fee_profile={fee_profile.name} "
+                f"trades={row.get('trades')} return={row.get('total_return_pct')}"
+            )
 
     results_df = pd.DataFrame(rows)
     rank_by = args.rank_by or (
@@ -245,14 +330,21 @@ def main() -> int:
     top_df = leaderboard.head(top_k).reset_index(drop=True)
     eligible = leaderboard.loc[leaderboard["eligible"]].reset_index(drop=True)
     best = eligible.iloc[0].to_dict() if not eligible.empty else None
+    robustness_df = summarize_set_robustness(leaderboard, walk_forward=args.walk_forward)
+    top_sets_df = robustness_df.head(top_k).reset_index(drop=True)
+    best_set = top_sets_df.iloc[0].to_dict() if not top_sets_df.empty else None
 
     results_path = out_dir / "vectorbt_parameter_set_results.csv"
     leaderboard_path = out_dir / "vectorbt_parameter_set_leaderboard.csv"
     top_path = out_dir / "vectorbt_parameter_set_top.csv"
+    robustness_path = out_dir / "vectorbt_parameter_set_robustness.csv"
+    top_sets_path = out_dir / "vectorbt_parameter_set_top_sets.csv"
     summary_path = out_dir / "vectorbt_parameter_set_summary.json"
     results_df.to_csv(results_path, index=False)
     leaderboard.to_csv(leaderboard_path, index=False)
     top_df.to_csv(top_path, index=False)
+    robustness_df.to_csv(robustness_path, index=False)
+    top_sets_df.to_csv(top_sets_path, index=False)
     summary_path.write_text(
         json.dumps(
             {
@@ -261,14 +353,17 @@ def main() -> int:
                 "start": start.date().isoformat(),
                 "end": end.date().isoformat(),
                 "walk_forward": bool(args.walk_forward),
+                "fee_profiles": [profile.name for profile in selected_profiles],
                 "rank_by": rank_by,
                 "min_trades": float(args.min_trades),
                 "max_drawdown_pct": (
                     float(args.max_drawdown_pct) if args.max_drawdown_pct is not None else None
                 ),
                 "parameter_set_count": int(len(param_sets)),
+                "run_count": int(len(results_df)),
                 "eligible_count": int(len(eligible)),
                 "best_eligible_set": best,
+                "best_robust_set": best_set,
             },
             indent=2,
             sort_keys=True,
@@ -279,6 +374,8 @@ def main() -> int:
     print(f"results={results_path}")
     print(f"leaderboard={leaderboard_path}")
     print(f"top={top_path}")
+    print(f"robustness={robustness_path}")
+    print(f"top_sets={top_sets_path}")
     print(f"summary={summary_path}")
     return 0
 

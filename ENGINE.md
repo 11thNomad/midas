@@ -228,6 +228,7 @@ Required invariant:
 ### M4.1: VectorBT Parameter-Set Lab
 - Status: `completed (named parameter-set catalog + batch runner + leaderboard artifacts)`
 - Maintain a versioned collection of parameter sets (`config/vectorbt_parameter_sets.yaml`).
+- Maintain configurable vectorbt fee profiles (`base`, `penalized`, `stress`) in `config/settings.yaml`.
 - Run batch comparisons and rank with eligibility filters (trade count and drawdown caps).
 - Validate selected candidates with walk-forward before paper promotion.
 
