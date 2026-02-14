@@ -225,6 +225,18 @@ monitoring:
     - api_error
     - regime_change
 
+# === Ops / Runbook Gates ===
+ops:
+  freshness:
+    candles_1d_max_age_minutes: 4320      # 3 days
+    candles_runtime_max_age_minutes: 1440 # 1 day
+    vix_1d_max_age_minutes: 4320          # 3 days
+    fii_1d_max_age_minutes: 7200          # 5 days
+    usdinr_1d_max_age_minutes: 4320       # 3 days
+    signal_snapshots_max_age_minutes: 10080 # 7 days
+    intraday_signal_max_age_minutes: 60
+    intraday_regime_max_age_minutes: 60
+
 # === Data Quality Gates ===
 data_quality:
   thresholds:

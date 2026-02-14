@@ -49,7 +49,8 @@
 - [x] Paper runtime scaffold (`scripts/run_paper.py`) with persisted regime snapshots/transitions
 - [x] VectorBT research runner + walk-forward scaffolding (`scripts/run_vectorbt_research.py`, `src/backtest/vectorbt_research.py`)
 - [x] Hybrid schedule-to-simulator backtest bridge (`src/backtest/hybrid.py`)
-- [x] Current automated test baseline green (`109 passed`)
+- [x] M6 paper-ops runbook with freshness gates + open/close automation (`scripts/paper_ops_runbook.py`, `src/ops/gates.py`)
+- [x] Current automated test baseline green (`117 passed`)
 
 ### Immediate TODOs (Added)
 - [x] Wire real Kite option-chain snapshots into `scripts/run_paper.py` (`chain_df` and `previous_chain_df`) and persist snapshots into cache.

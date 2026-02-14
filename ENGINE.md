@@ -231,6 +231,7 @@ Required invariant:
 - Validate against existing event-driven backtest on overlapping scenarios.
 
 ### M6: Paper-Ready Operations
+- Status: `completed (ops runbook + freshness gates + cron-ready open/close checks)`
 - Daily maintenance + data freshness gates.
 - Session start/end health checks.
 - Structured reporting and risk alerts.

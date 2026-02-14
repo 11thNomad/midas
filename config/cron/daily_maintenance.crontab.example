@@ -8,5 +8,11 @@ SHELL=/bin/bash
 # 08:55 IST (Mon-Fri): pre-open sanity check
 55 8 * * 1-5 cd /workspaces/midas && /usr/bin/env bash -lc 'python scripts/health_check.py --quick >> data/logs/preopen_health.log 2>&1'
 
+# 09:05 IST (Mon-Fri): M6 open runbook gates (freshness + optional health step)
+5 9 * * 1-5 cd /workspaces/midas && /usr/bin/env bash -lc 'python scripts/paper_ops_runbook.py --phase open --symbol NIFTY --timeframe 1d --run-health-check >> data/logs/paper_ops_open.log 2>&1'
+
 # 15:45 IST (Mon-Fri): incremental append + quality report after market close
 45 15 * * 1-5 cd /workspaces/midas && /usr/bin/env bash -lc 'python scripts/daily_maintenance.py --days 2 --symbols NIFTY,BANKNIFTY --timeframes 1d,5m --strict-quality >> data/logs/daily_maintenance.log 2>&1'
+
+# 16:20 IST (Mon-Fri): M6 close runbook (maintenance + vectorbt walk-forward + fills report)
+20 16 * * 1-5 cd /workspaces/midas && /usr/bin/env bash -lc 'python scripts/paper_ops_runbook.py --phase close --symbol NIFTY --timeframe 1d --run-maintenance --run-vectorbt --run-paper-fills-report >> data/logs/paper_ops_close.log 2>&1'
