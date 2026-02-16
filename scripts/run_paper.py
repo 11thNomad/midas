@@ -43,6 +43,7 @@ from src.regime import (
 from src.risk.circuit_breaker import CircuitBreaker
 from src.signals.pipeline import build_feature_context
 from src.strategies.base import BaseStrategy
+from src.strategies.baseline_trend import BaselineTrendStrategy
 from src.strategies.iron_condor import IronCondorStrategy
 from src.strategies.jade_lizard import JadeLizardStrategy
 from src.strategies.momentum import MomentumStrategy
@@ -81,6 +82,8 @@ def build_strategies(settings: dict) -> list[BaseStrategy]:
             continue
         if name == "momentum":
             strategies.append(MomentumStrategy(name=name, config=cfg))
+        elif name == "baseline_trend":
+            strategies.append(BaselineTrendStrategy(name=name, config=cfg))
         elif name == "iron_condor":
             strategies.append(IronCondorStrategy(name=name, config=cfg))
         elif name == "jade_lizard":
@@ -91,7 +94,7 @@ def build_strategies(settings: dict) -> list[BaseStrategy]:
             unknown_enabled.append(name)
 
     if unknown_enabled:
-        known = ["regime_probe", "momentum", "iron_condor", "jade_lizard"]
+        known = ["regime_probe", "baseline_trend", "momentum", "iron_condor", "jade_lizard"]
         raise ValueError(
             "Unknown enabled strategy id(s): "
             f"{', '.join(sorted(unknown_enabled))}. "

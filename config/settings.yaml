@@ -88,6 +88,18 @@ risk:
 # === Strategies ===
 strategies:
 
+  baseline_trend:
+    enabled: false
+    instrument: NIFTY
+    active_regimes:
+      - low_vol_trending
+      - high_vol_trending
+    adx_min: 25.0
+    vix_max:
+    adx_period: 14
+    max_lots: 1
+    capital_per_trade: 150000
+
   iron_condor:
     enabled: true
     instrument: NIFTY

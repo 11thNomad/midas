@@ -29,6 +29,7 @@ from src.backtest import (
 from src.data.store import DataStore
 from src.regime.classifier import RegimeClassifier, RegimeThresholds
 from src.risk.circuit_breaker import CircuitBreaker
+from src.strategies.baseline_trend import BaselineTrendStrategy
 from src.strategies.iron_condor import IronCondorStrategy
 from src.strategies.jade_lizard import JadeLizardStrategy
 from src.strategies.momentum import MomentumStrategy
@@ -44,6 +45,7 @@ DEFAULT_SENSITIVITY_PARAMS = {
         "stop_loss_pct",
     ],
     "momentum": ["fast_ema", "slow_ema", "adx_filter", "atr_multiplier"],
+    "baseline_trend": ["adx_min", "vix_max"],
     "regime_probe": ["lots"],
 }
 
@@ -81,7 +83,7 @@ def parse_args() -> argparse.Namespace:
         dest="strategies",
         help=(
             "Strategy id; repeatable or comma-separated "
-            "(available: regime_probe, momentum, iron_condor, jade_lizard)"
+            "(available: regime_probe, baseline_trend, momentum, iron_condor, jade_lizard)"
         ),
     )
     parser.add_argument(
@@ -169,6 +171,17 @@ def build_strategy(
         strategy = MomentumStrategy(name=strategy_id, config=momentum_cfg)
         capital = float(momentum_cfg.get("capital_per_trade", 200000) or 200000)
         return strategy, capital, momentum_cfg
+    if strategy_id == "baseline_trend":
+        base_cfg = settings.get("strategies", {}).get("baseline_trend", {})
+        baseline_cfg = {
+            **base_cfg,
+            "instrument": symbol,
+            "timeframe": timeframe,
+            **config_overrides,
+        }
+        strategy = BaselineTrendStrategy(name=strategy_id, config=baseline_cfg)
+        capital = float(baseline_cfg.get("capital_per_trade", 150000) or 150000)
+        return strategy, capital, baseline_cfg
     if strategy_id == "iron_condor":
         base_cfg = settings.get("strategies", {}).get("iron_condor", {})
         ic_cfg = {**base_cfg, "instrument": symbol, "timeframe": timeframe, **config_overrides}
@@ -183,7 +196,8 @@ def build_strategy(
         return strategy, capital, jl_cfg
     raise ValueError(
         "Unsupported strategy "
-        f"'{strategy_id}'. Available: regime_probe, momentum, iron_condor, jade_lizard"
+        f"'{strategy_id}'. Available: regime_probe, baseline_trend, momentum, "
+        "iron_condor, jade_lizard"
     )
 
 
@@ -801,6 +815,26 @@ def main() -> int:
     if runs_completed == 0:
         print("No backtests executed (missing candle data for selected symbols/date range).")
         return 1
+
+    if len(strategy_ids) > 1 and cross_rows:
+        comparison_df = (
+            pd.DataFrame(cross_rows)
+            .sort_values(
+                ["symbol", "total_return_pct", "sharpe_ratio"],
+                ascending=[True, False, False],
+            )
+            .reset_index(drop=True)
+        )
+        comparison_stamp = f"{args.timeframe}_{start.date()}_{end.date()}"
+        comparison_csv = Path(output_dir) / f"strategy_comparison_{comparison_stamp}.csv"
+        comparison_json = Path(output_dir) / f"strategy_comparison_{comparison_stamp}.json"
+        comparison_df.to_csv(comparison_csv, index=False)
+        comparison_json.write_text(
+            json.dumps(comparison_df.to_dict(orient="records"), indent=2, sort_keys=True)
+        )
+        print("\nStrategy comparison")
+        print(f"  comparison_csv: {comparison_csv}")
+        print(f"  comparison_json: {comparison_json}")
 
     if len(symbols) > 1 and cross_rows:
         cross_detail = (

@@ -59,3 +59,20 @@ def test_build_strategies_includes_jade_lizard_when_enabled():
     strategies = build_strategies(settings)
     names = sorted(strategy.name for strategy in strategies)
     assert names == ["iron_condor", "jade_lizard"]
+
+
+def test_build_strategies_includes_baseline_trend_when_enabled():
+    settings = {
+        "strategies": {
+            "baseline_trend": {
+                "enabled": True,
+                "active_regimes": ["low_vol_trending", "high_vol_trending"],
+                "adx_min": 25.0,
+            },
+            "iron_condor": {"enabled": True, "active_regimes": ["low_vol_ranging"]},
+        }
+    }
+
+    strategies = build_strategies(settings)
+    names = sorted(strategy.name for strategy in strategies)
+    assert names == ["baseline_trend", "iron_condor"]
