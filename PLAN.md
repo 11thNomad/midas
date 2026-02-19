@@ -65,6 +65,13 @@
 - [x] Add replay-based visual review artifact generator (`scripts/regime_visual_review.py`) producing CSV + chart + HTML + checklist.
 - [ ] **Visual review step:** run the generated artifact and manually verify regime labels vs chart context before strategy comparisons.
 
+### Regime Validation Caveat (Current)
+- Historical replay/visual validation currently reflects mostly VIX + ADX behavior because historical FII coverage is incomplete and replay stress features (FII/PCR/IV-surface) are often near zero in older windows.
+- Treat current suspicious regime windows as provisional until paper/live feature history accumulates and replay can be re-validated with non-zero stress features.
+- Prefer execution-layer safety controls before classifier complexity while feature coverage is incomplete.
+- Candidate controls (feature-flagged): downside price-shock override, faster VIX shock signal, and temporary short-vol entry block after large downside days.
+- Re-run regime review and strategy comparisons after sufficient paper/live feature coverage is available.
+
 ### Required To Proceed To Phase 6 Completion
 - [x] Add/confirm hysteresis + smoothing behavior tests in classifier to reduce flip-flops in transition zone.
 - [x] Prove strict no-lookahead regime computation path for historical replay.

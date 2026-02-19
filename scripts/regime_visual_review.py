@@ -21,6 +21,7 @@ from matplotlib import pyplot as plt
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
+from src.data.candle_access import build_candle_stores, read_candles
 from src.data.store import DataStore
 from src.regime import RegimeClassifier, RegimeThresholds
 from src.regime.replay import replay_regimes_no_lookahead
@@ -247,8 +248,13 @@ def main() -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     store = DataStore(base_dir=str(cache_dir))
-    candles = store.read_time_series(
-        "candles", symbol=args.symbol, timeframe=args.timeframe, start=load_start, end=end
+    candle_stores = build_candle_stores(settings=settings, repo_root=REPO_ROOT)
+    candles, candle_source = read_candles(
+        stores=candle_stores,
+        symbol=args.symbol,
+        timeframe=args.timeframe,
+        start=load_start,
+        end=end,
     )
     if candles.empty:
         print("No candle data available for requested window.")
@@ -329,6 +335,7 @@ def main() -> int:
     print("=" * 72)
     print("Regime Visual Review Artifact")
     print("=" * 72)
+    print(f"candles_source={candle_source}")
     print(
         f"symbol={args.symbol} timeframe={args.timeframe} "
         f"rows={len(review)} transitions={len(replay.transitions)}"

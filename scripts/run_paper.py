@@ -27,9 +27,11 @@ except ImportError:  # pragma: no cover - optional in some environments
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
+from src.data.candle_access import CandleStores, build_candle_stores, read_candles
 from src.data.contracts import option_dtos_from_chain
 from src.data.fii import FiiDownloadError, fetch_fii_dii
 from src.data.kite_feed import KiteFeed, KiteFeedError
+from src.data.option_chain_quality import OptionChainQualityThresholds
 from src.data.store import DataStore
 from src.execution import PaperExecutionEngine
 from src.regime import (
@@ -106,14 +108,15 @@ def build_strategies(settings: dict) -> list[BaseStrategy]:
 def _load_or_fetch_candles(
     *,
     store: DataStore,
+    candle_stores: CandleStores,
     feed: KiteFeed,
     symbol: str,
     timeframe: str,
     start: datetime,
     end: datetime,
 ) -> pd.DataFrame:
-    candles = store.read_time_series(
-        "candles",
+    candles, _ = read_candles(
+        stores=candle_stores,
         symbol=symbol,
         timeframe=timeframe,
         start=start,
@@ -392,8 +395,12 @@ def main() -> int:
         return 1
 
     feed = KiteFeed(api_key=api_key, access_token=access_token)
-    store = DataStore(base_dir=str(cache_dir))
+    candle_stores = build_candle_stores(settings=settings, repo_root=REPO_ROOT)
+    store = candle_stores.raw
     chain_dte_min, chain_dte_max = _option_chain_dte_bounds(settings)
+    chain_quality_thresholds = OptionChainQualityThresholds.from_config(
+        settings.get("data_quality", {}).get("option_chain", {})
+    )
     previous_chain_df = _load_latest_option_chain_snapshot(
         store=store,
         symbol=args.symbol,
@@ -458,6 +465,7 @@ def main() -> int:
         try:
             candles = _load_or_fetch_candles(
                 store=store,
+                candle_stores=candle_stores,
                 feed=feed,
                 symbol=args.symbol,
                 timeframe=args.timeframe,
@@ -515,6 +523,7 @@ def main() -> int:
                 ),
                 regime=runtime.classifier.current_regime.value,
                 thresholds=runtime.classifier.thresholds,
+                chain_quality_thresholds=chain_quality_thresholds,
                 source="paper_loop",
             )
 

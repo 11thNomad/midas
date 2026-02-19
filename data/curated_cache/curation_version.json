@@ -1,0 +1,9 @@
+{
+  "processed_targets": 2,
+  "quality_failures": 0,
+  "report_path": "data/reports/curated_cleanup_20260219_033314.json",
+  "schema_version": "candles_curated_v1",
+  "updated_at": "2026-02-19T03:33:14.513748+00:00",
+  "window_end": null,
+  "window_start": null
+}

@@ -1,0 +1,26 @@
+{
+  "datasets": {
+    "candles:BANKNIFTY:1d": {
+      "dataset": "candles",
+      "max_timestamp": "2026-02-13T00:00:00",
+      "min_timestamp": "2022-01-03T00:00:00",
+      "rows": 1023,
+      "source": "curated_cleanup",
+      "symbol": "BANKNIFTY",
+      "timeframe": "1d",
+      "timestamp_col": "timestamp",
+      "updated_at": "2026-02-19T03:33:14.500058+00:00"
+    },
+    "candles:NIFTY:1d": {
+      "dataset": "candles",
+      "max_timestamp": "2026-02-13T00:00:00",
+      "min_timestamp": "2021-11-01T00:00:00",
+      "rows": 1066,
+      "source": "curated_cleanup",
+      "symbol": "NIFTY",
+      "timeframe": "1d",
+      "timestamp_col": "timestamp",
+      "updated_at": "2026-02-19T03:33:09.384486+00:00"
+    }
+  }
+}

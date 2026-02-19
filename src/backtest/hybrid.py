@@ -10,6 +10,7 @@ import pandas as pd
 
 from src.backtest.engine import BacktestEngine, BacktestResult
 from src.backtest.simulator import FillSimulator
+from src.data.option_chain_quality import OptionChainQualityThresholds
 from src.regime.classifier import RegimeClassifier, RegimeThresholds
 from src.strategies.base import BaseStrategy, RegimeState, Signal, SignalType
 
@@ -114,6 +115,7 @@ def run_hybrid_schedule_backtest(
     usdinr_df: pd.DataFrame | None = None,
     option_chain_df: pd.DataFrame | None = None,
     analysis_start: datetime | None = None,
+    chain_quality_thresholds: OptionChainQualityThresholds | None = None,
 ) -> BacktestResult:
     strategy = ScheduleDrivenStrategy(
         name="hybrid_schedule",
@@ -130,6 +132,7 @@ def run_hybrid_schedule_backtest(
         strategy=strategy,
         simulator=simulator,
         initial_capital=config.initial_capital,
+        chain_quality_thresholds=chain_quality_thresholds or OptionChainQualityThresholds(),
     )
     return engine.run(
         candles=candles,

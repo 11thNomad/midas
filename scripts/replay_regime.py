@@ -13,6 +13,7 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
+from src.data.candle_access import build_candle_stores, read_candles
 from src.data.store import DataStore
 from src.regime import (
     RegimeClassifier,
@@ -86,13 +87,14 @@ def main() -> int:
     load_start, analysis_start, end = resolve_windows(args)
     cache_dir = REPO_ROOT / settings.get("data", {}).get("cache_dir", "data/cache")
 
+    candle_stores = build_candle_stores(settings=settings, repo_root=REPO_ROOT)
     store = DataStore(base_dir=str(cache_dir))
     classifier = RegimeClassifier(
         thresholds=RegimeThresholds.from_config(settings.get("regime", {}))
     )
 
-    candles = store.read_time_series(
-        "candles",
+    candles, candle_source = read_candles(
+        stores=candle_stores,
         symbol=args.symbol,
         timeframe=args.timeframe,
         start=load_start,
@@ -128,6 +130,7 @@ def main() -> int:
     print("Regime Dry Replay")
     print("=" * 72)
     print(f"symbol={args.symbol} timeframe={args.timeframe}")
+    print(f"candles_source={candle_source}")
     load_window_start = load_start.date() if load_start else "begin"
     analysis_window_start = analysis_start.date() if analysis_start else "begin"
     window_end = end.date() if end else "latest"

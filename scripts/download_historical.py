@@ -25,7 +25,10 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from src.data.fii import FiiDownloadError, fetch_fii_dii
 from src.data.kite_feed import KiteFeed, KiteFeedError
+from src.data.nse_fo_bhavcopy import NSEFOBhavcopyError, fetch_option_chain_history
 from src.data.store import DataStore
+
+OPTION_CHAIN_DEDUP_COLS = ["timestamp", "expiry", "strike", "option_type"]
 
 DEFAULT_FULL_SYMBOLS = ["NIFTY", "BANKNIFTY"]
 DEFAULT_FULL_TIMEFRAMES = ["1d", "5m"]
@@ -58,6 +61,36 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--skip-vix", action="store_true", help="Skip India VIX series download.")
     parser.add_argument("--skip-fii", action="store_true", help="Skip FII/DII flow ingest.")
+    parser.add_argument(
+        "--include-option-chain",
+        action="store_true",
+        help=(
+            "Download and assemble daily historical option-chain rows from NSE F&O bhavcopy "
+            "(index options only)."
+        ),
+    )
+    parser.add_argument(
+        "--only-option-chain",
+        action="store_true",
+        help=(
+            "Run only NSE F&O option-chain assembly. "
+            "Skips candles/VIX/USDINR/FII and does not require Kite credentials."
+        ),
+    )
+    parser.add_argument(
+        "--option-chain-timeframe",
+        default="1d",
+        help="Partition label to store assembled option_chain rows (default: 1d).",
+    )
+    parser.add_argument(
+        "--option-chain-chunk-days",
+        type=int,
+        default=31,
+        help=(
+            "Number of calendar days per option-chain fetch chunk "
+            "(default: 31; lower this if requests are slow)."
+        ),
+    )
     parser.add_argument(
         "--settings",
         default="config/settings.yaml",
@@ -108,13 +141,16 @@ def main() -> int:
     start, end = resolve_window(args, settings)
     symbols, timeframes = resolve_plan(args)
 
+    requires_kite = not args.only_option_chain
     api_key = os.getenv("KITE_API_KEY", "").strip()
     access_token = os.getenv("KITE_ACCESS_TOKEN", "").strip()
-    if not api_key or not access_token:
-        print("[FAIL] Missing Kite credentials. Set KITE_API_KEY and KITE_ACCESS_TOKEN in .env.")
+    if requires_kite and (not api_key or not access_token):
+        print(
+            "[FAIL] Missing Kite credentials. Set KITE_API_KEY and KITE_ACCESS_TOKEN in .env."
+        )
         return 1
 
-    feed = KiteFeed(api_key=api_key, access_token=access_token)
+    feed = KiteFeed(api_key=api_key, access_token=access_token) if requires_kite else None
     store = DataStore(base_dir=str(REPO_ROOT / cache_dir))
 
     print("=" * 64)
@@ -128,17 +164,40 @@ def main() -> int:
     failures = 0
     downloads = 0
 
-    for symbol in symbols:
-        for timeframe in timeframes:
-            label = f"candles {symbol} {timeframe}"
-            print(f"\n[RUN] {label}")
+    if requires_kite:
+        for symbol in symbols:
+            for timeframe in timeframes:
+                label = f"candles {symbol} {timeframe}"
+                print(f"\n[RUN] {label}")
+                try:
+                    candles = feed.get_candles(
+                        symbol=symbol,
+                        timeframe=timeframe,
+                        start=start,
+                        end=end,
+                    )
+                    rows = store.write_time_series(
+                        "candles",
+                        candles,
+                        symbol=symbol,
+                        timeframe=timeframe,
+                        source=feed.name,
+                    )
+                    print(f"  [OK] cached rows={rows}")
+                    downloads += 1
+                except (KiteFeedError, ValueError) as exc:
+                    failures += 1
+                    print(f"  [FAIL] {exc}")
+
+        if not args.skip_vix:
+            print("\n[RUN] vix daily")
             try:
-                candles = feed.get_candles(symbol=symbol, timeframe=timeframe, start=start, end=end)
+                vix = feed.get_vix(start=start, end=end)
                 rows = store.write_time_series(
-                    "candles",
-                    candles,
-                    symbol=symbol,
-                    timeframe=timeframe,
+                    "vix",
+                    vix,
+                    symbol="INDIAVIX",
+                    timeframe="1d",
                     source=feed.name,
                 )
                 print(f"  [OK] cached rows={rows}")
@@ -147,58 +206,102 @@ def main() -> int:
                 failures += 1
                 print(f"  [FAIL] {exc}")
 
-    if not args.skip_vix:
-        print("\n[RUN] vix daily")
-        try:
-            vix = feed.get_vix(start=start, end=end)
-            rows = store.write_time_series(
-                "vix",
-                vix,
-                symbol="INDIAVIX",
-                timeframe="1d",
-                source=feed.name,
-            )
-            print(f"  [OK] cached rows={rows}")
-            downloads += 1
-        except (KiteFeedError, ValueError) as exc:
-            failures += 1
-            print(f"  [FAIL] {exc}")
+        if not args.skip_usdinr:
+            usdinr_symbol = str(settings.get("market", {}).get("usdinr_symbol", "USDINR")).upper()
+            print(f"\n[RUN] usdinr daily ({usdinr_symbol})")
+            try:
+                usdinr = feed.get_candles(
+                    symbol=usdinr_symbol,
+                    timeframe="1d",
+                    start=start,
+                    end=end,
+                )
+                rows = store.write_time_series(
+                    "candles",
+                    usdinr,
+                    symbol=usdinr_symbol,
+                    timeframe="1d",
+                    source=feed.name,
+                )
+                print(f"  [OK] cached rows={rows}")
+                downloads += 1
+            except (KiteFeedError, ValueError) as exc:
+                failures += 1
+                print(f"  [FAIL] {exc}")
 
-    if not args.skip_usdinr:
-        usdinr_symbol = str(settings.get("market", {}).get("usdinr_symbol", "USDINR")).upper()
-        print(f"\n[RUN] usdinr daily ({usdinr_symbol})")
-        try:
-            usdinr = feed.get_candles(symbol=usdinr_symbol, timeframe="1d", start=start, end=end)
-            rows = store.write_time_series(
-                "candles",
-                usdinr,
-                symbol=usdinr_symbol,
-                timeframe="1d",
-                source=feed.name,
-            )
-            print(f"  [OK] cached rows={rows}")
-            downloads += 1
-        except (KiteFeedError, ValueError) as exc:
-            failures += 1
-            print(f"  [FAIL] {exc}")
+        if not args.skip_fii:
+            print("\n[RUN] fii_dii daily")
+            try:
+                fii = fetch_fii_dii(start=start, end=end)
+                rows = store.write_time_series(
+                    "fii_dii",
+                    fii,
+                    symbol="NSE",
+                    timeframe="1d",
+                    timestamp_col="date",
+                    source="nse",
+                )
+                print(f"  [OK] cached rows={rows}")
+                downloads += 1
+            except (FiiDownloadError, ValueError) as exc:
+                failures += 1
+                print(f"  [FAIL] {exc}")
 
-    if not args.skip_fii:
-        print("\n[RUN] fii_dii daily")
-        try:
-            fii = fetch_fii_dii(start=start, end=end)
-            rows = store.write_time_series(
-                "fii_dii",
-                fii,
-                symbol="NSE",
-                timeframe="1d",
-                timestamp_col="date",
-                source="nse",
+    if args.include_option_chain:
+        chunk_days = max(1, int(args.option_chain_chunk_days))
+        for symbol in symbols:
+            print(
+                f"\n[RUN] option_chain {symbol} ({args.option_chain_timeframe}) "
+                f"chunk_days={chunk_days}"
             )
-            print(f"  [OK] cached rows={rows}")
-            downloads += 1
-        except (FiiDownloadError, ValueError) as exc:
-            failures += 1
-            print(f"  [FAIL] {exc}")
+            chunk_start = start
+            symbol_total_rows = 0
+            symbol_cached_rows = 0
+            chunk_index = 0
+            symbol_failed = False
+            while chunk_start <= end:
+                chunk_end = min(chunk_start + timedelta(days=chunk_days - 1), end)
+                chunk_index += 1
+                print(
+                    "  [CHUNK] "
+                    f"{chunk_index}: {chunk_start.date()} -> {chunk_end.date()}"
+                )
+                try:
+                    chain = fetch_option_chain_history(
+                        symbol=symbol,
+                        start=chunk_start,
+                        end=chunk_end,
+                    )
+                    if chain.empty:
+                        print("    [WARN] no rows in chunk")
+                    else:
+                        rows = store.write_time_series(
+                            "option_chain",
+                            chain,
+                            symbol=symbol,
+                            timeframe=args.option_chain_timeframe,
+                            timestamp_col="timestamp",
+                            dedup_cols=OPTION_CHAIN_DEDUP_COLS,
+                            source="nse_bhavcopy_fo",
+                        )
+                        symbol_total_rows += len(chain)
+                        symbol_cached_rows += rows
+                        print(f"    [OK] chunk_rows={len(chain)} cached_rows={rows}")
+                except (NSEFOBhavcopyError, ValueError) as exc:
+                    failures += 1
+                    symbol_failed = True
+                    print(f"    [FAIL] {exc}")
+                chunk_start = chunk_end + timedelta(days=1)
+
+            if symbol_total_rows == 0:
+                print("  [WARN] no option-chain rows found for full symbol window")
+            else:
+                print(
+                    "  [OK] option_chain summary: "
+                    f"total_rows={symbol_total_rows} cached_rows={symbol_cached_rows}"
+                )
+            if not symbol_failed:
+                downloads += 1
 
     print("\n" + "=" * 64)
     print(f"Completed: successful_tasks={downloads}, failed_tasks={failures}")

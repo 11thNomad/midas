@@ -24,6 +24,8 @@ def test_holiday_is_not_counted_as_missing_trading_day():
 
     report = assess_candle_quality(df, timeframe="1d")
     assert report.missing_trading_days == 0
+    # Trading-day-aware gap should remain one trading step (1440m), not weekend+holiday wall-clock.
+    assert report.largest_gap_minutes == 1440.0
 
 
 def test_quality_gate_fails_when_threshold_exceeded():
@@ -46,3 +48,22 @@ def test_quality_gate_fails_when_threshold_exceeded():
 
     assert gate.status == "failed_thresholds"
     assert any("duplicate_timestamps" in v for v in gate.violations)
+
+
+def test_largest_gap_minutes_for_1d_is_trading_day_aware():
+    # Wed -> Fri with Thursday trading day missing.
+    df = pd.DataFrame(
+        {
+            "timestamp": pd.to_datetime(["2026-01-21", "2026-01-23"]),
+            "open": [100, 101],
+            "high": [101, 102],
+            "low": [99, 100],
+            "close": [100.5, 101.5],
+            "volume": [10, 10],
+        }
+    )
+
+    report = assess_candle_quality(df, timeframe="1d")
+    assert report.missing_trading_days == 1
+    # Two trading-day steps (Wed->Thu->Fri).
+    assert report.largest_gap_minutes == 2880.0

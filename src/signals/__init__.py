@@ -1,24 +1,11 @@
-"""Signal library exports."""
-
-from src.signals import (
-    composite,
-    contracts,
-    greeks,
-    mean_reversion,
-    options_signals,
-    pipeline,
-    regime,
-    regime_filters,
-    trend,
-    volatility,
-    volume_flow,
-)
+"""Signal subpackage."""
 
 __all__ = [
     "composite",
     "contracts",
     "greeks",
     "mean_reversion",
+    "option_chain_features",
     "options_signals",
     "pipeline",
     "regime",

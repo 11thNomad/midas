@@ -105,6 +105,11 @@ Achievement:
 
 ## 3) Data Quality + Regime Sanity
 
+0. Build curated candle cache (dedupe + canonical daily timestamps)
+```bash
+python scripts/cleanup_curated_data.py --symbol NIFTY --symbol BANKNIFTY --timeframe 1d --strict
+```
+
 1. Quality gate
 ```bash
 python scripts/data_quality_report.py --strict
@@ -123,6 +128,8 @@ python scripts/regime_transition_report.py --symbol NIFTY --start 2022-01-01 --e
 
 Achievement:
 - Verifies raw data integrity and regime labeling stability before strategy comparison.
+- Produces reproducible curated candle data in `data/curated_cache` for downstream runs.
+- Backtest/vectorbt/replay pipelines now prefer curated candles and fallback to raw if curated is unavailable.
 
 ## 4) Event-Driven Strategy Backtests (Primary Comparison)
 

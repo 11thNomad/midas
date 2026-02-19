@@ -3,13 +3,22 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 import pandas as pd
 
-from src.regime.classifier import RegimeSignals, RegimeThresholds
-from src.signals import mean_reversion, options_signals, trend, volatility, volume_flow
+from src.data.option_chain_quality import (
+    OptionChainQualityThresholds,
+    assess_option_chain_quality,
+    evaluate_option_chain_quality,
+)
+from src.signals import mean_reversion, trend, volatility, volume_flow
 from src.signals.contracts import SignalSnapshotDTO, signal_snapshot_from_mapping
 from src.signals.greeks import mibian_greeks
+from src.signals.option_chain_features import build_option_chain_feature_row
+
+if TYPE_CHECKING:
+    from src.regime.classifier import RegimeSignals, RegimeThresholds
 
 
 def build_feature_context(
@@ -26,8 +35,30 @@ def build_feature_context(
     usdinr_close: pd.Series | None = None,
     regime: str = "unknown",
     thresholds: RegimeThresholds | None = None,
+    chain_quality_thresholds: OptionChainQualityThresholds | None = None,
     source: str = "signal_pipeline",
 ) -> tuple[SignalSnapshotDTO, RegimeSignals]:
+    from src.regime.classifier import RegimeSignals
+
+    quality_thresholds = chain_quality_thresholds or OptionChainQualityThresholds()
+    chain_quality_report = assess_option_chain_quality(chain_df)
+    chain_quality_gate = evaluate_option_chain_quality(chain_quality_report, quality_thresholds)
+
+    chain_ok = chain_quality_gate.status == "ok"
+    effective_chain = chain_df if chain_ok else None
+    previous_chain_ok = (
+        evaluate_option_chain_quality(
+            assess_option_chain_quality(previous_chain_df),
+            quality_thresholds,
+        ).status
+        == "ok"
+        if previous_chain_df is not None and not previous_chain_df.empty
+        else False
+    )
+    effective_previous_chain = (
+        previous_chain_df if chain_ok and previous_chain_ok else None
+    )
+
     adx_14 = 0.0
     atr_14 = 0.0
     rsi_14 = 0.0
@@ -55,10 +86,23 @@ def build_feature_context(
         if not dma200.dropna().empty:
             above_200dma = bool(latest_close > float(dma200.dropna().iloc[-1]))
 
-    pcr_oi = options_signals.put_call_ratio(chain_df) if chain_df is not None else 0.0
-    oi_support, oi_resistance = (
-        options_signals.oi_support_resistance(chain_df) if chain_df is not None else (0.0, 0.0)
+    fallback_spot = (
+        _latest(pd.to_numeric(candles["close"], errors="coerce"))
+        if not candles.empty
+        else 0.0
     )
+    chain_features = build_option_chain_feature_row(
+        chain_df=effective_chain,
+        previous_chain_df=effective_previous_chain,
+        asof=timestamp,
+        fallback_spot=fallback_spot,
+    )
+    pcr_oi = (
+        chain_features.pcr_oi_atm_band
+        if chain_features.pcr_oi_atm_band > 0.0
+        else chain_features.pcr_oi_total
+    )
+    oi_support, oi_resistance = chain_features.oi_support, chain_features.oi_resistance
 
     vix_roc_5d = 0.0
     if vix_series is not None and not vix_series.empty:
@@ -82,20 +126,13 @@ def build_feature_context(
             usdinr_roc_1d = _latest(usd.pct_change(periods=1) * 100.0)
             usdinr_roc_3d = _latest(usd.pct_change(periods=3) * 100.0)
 
-    iv_surface_parallel_shift = 0.0
-    iv_surface_tilt_change = 0.0
-    if chain_df is not None and previous_chain_df is not None:
-        iv_surface_parallel_shift = options_signals.iv_surface_parallel_shift(
-            previous_chain_df, chain_df
-        )
-        iv_surface_tilt_change = options_signals.iv_surface_tilt_change(previous_chain_df, chain_df)
+    iv_surface_parallel_shift = chain_features.iv_surface_parallel_shift
+    iv_surface_tilt_change = chain_features.iv_surface_tilt_change
 
     greeks = _atm_greeks_from_chain(
-        chain_df=chain_df,
+        chain_df=effective_chain,
         asof=timestamp,
-        fallback_spot=_latest(pd.to_numeric(candles["close"], errors="coerce"))
-        if not candles.empty
-        else 0.0,
+        fallback_spot=fallback_spot if fallback_spot > 0.0 else chain_features.spot,
     )
 
     confidence = _regime_confidence(
@@ -113,6 +150,14 @@ def build_feature_context(
             "adx_14": float(adx_14),
             "atr_14": float(atr_14),
             "pcr_oi": float(pcr_oi),
+            "pcr_oi_total": float(chain_features.pcr_oi_total),
+            "pcr_oi_atm_band": float(chain_features.pcr_oi_atm_band),
+            "pcr_oi_otm_band": float(chain_features.pcr_oi_otm_band),
+            "near_term_pcr_oi": float(chain_features.near_term_pcr_oi),
+            "next_term_pcr_oi": float(chain_features.next_term_pcr_oi),
+            "option_spot": float(chain_features.spot),
+            "option_atm_strike": float(chain_features.atm_strike),
+            "option_strike_step": float(chain_features.strike_step),
             "fii_net_3d": float(fii_net_3d),
             "fii_net_5d": float(fii_net_5d),
             "usdinr_roc_1d": float(usdinr_roc_1d),
@@ -121,6 +166,10 @@ def build_feature_context(
             "bollinger_width_20_2": float(boll_width),
             "oi_support": float(oi_support),
             "oi_resistance": float(oi_resistance),
+            "atm_iv_near": float(chain_features.atm_iv_near),
+            "atm_iv_next": float(chain_features.atm_iv_next),
+            "iv_term_structure": float(chain_features.iv_term_structure),
+            "iv_skew_otm": float(chain_features.iv_skew_otm),
             "iv_surface_parallel_shift": float(iv_surface_parallel_shift),
             "iv_surface_tilt_change": float(iv_surface_tilt_change),
             "atm_call_delta": float(greeks["call_delta"]),
@@ -129,6 +178,9 @@ def build_feature_context(
             "atm_theta": float(greeks["theta"]),
             "atm_vega": float(greeks["vega"]),
             "atm_rho": float(greeks["rho"]),
+            "chain_rows": int(chain_quality_report.rows),
+            "chain_quality_issue_count": int(chain_quality_gate.issue_count),
+            "chain_quality_status": chain_quality_gate.status,
             "regime": regime,
             "regime_confidence": float(confidence),
             "source": source,

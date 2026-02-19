@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
@@ -17,11 +18,32 @@ def test_write_backtest_report_creates_files(tmp_path):
         regimes=pd.DataFrame(
             {"timestamp": pd.date_range("2026-01-01", periods=1), "regime": ["low_vol_ranging"]}
         ),
+        signal_snapshots=pd.DataFrame(
+            [
+                {
+                    "timestamp": datetime(2026, 1, 1, 9, 15),
+                    "symbol": "NIFTY",
+                    "timeframe": "1d",
+                    "regime": "low_vol_ranging",
+                    "regime_confidence": 0.5,
+                    "chain_rows": 20,
+                    "chain_quality_status": "ok",
+                    "pcr_oi": 1.05,
+                    "option_spot": 22000.0,
+                    "option_atm_strike": 22000.0,
+                    "iv_term_structure": -0.2,
+                }
+            ]
+        ),
         metrics={"final_equity": 1000.0},
     )
     paths = write_backtest_report(result, output_dir=str(tmp_path), run_name="demo")
     for _, p in paths.items():
         assert Path(p).exists()
+    option_features = pd.read_csv(paths["option_features_csv"])
+    assert len(option_features) == 1
+    assert "option_spot" in option_features.columns
+    assert "pcr_oi" in option_features.columns
 
 
 def test_write_walkforward_report_creates_files(tmp_path):

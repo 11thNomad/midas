@@ -116,15 +116,17 @@ def assess_candle_quality(
         (pd.to_datetime(df["timestamp"], errors="coerce").diff() < pd.Timedelta(0)).sum()
     )
 
-    # Gap checks
-    deltas = data["timestamp"].diff().dropna()
-    largest_gap_minutes = _safe_minutes(deltas.max() if not deltas.empty else None)
+    cal = calendar or nse_calendar
+    largest_gap_minutes = _largest_gap_minutes(
+        timestamps=data["timestamp"],
+        timeframe=timeframe,
+        calendar=cal,
+    )
 
     missing_trading_days: int | None = None
     if timeframe.lower() == "1d" and len(data) > 1:
         start_day = data["timestamp"].min().date()
         end_day = data["timestamp"].max().date()
-        cal = calendar or nse_calendar
         expected = set(cal.trading_days_between(start=start_day, end=end_day))
         observed = {ts.date() for ts in data["timestamp"].dt.normalize().unique()}
         missing_trading_days = int(len(expected.difference(observed)))
@@ -139,6 +141,37 @@ def assess_candle_quality(
         missing_trading_days=missing_trading_days,
         largest_gap_minutes=largest_gap_minutes,
     )
+
+
+def _largest_gap_minutes(
+    *,
+    timestamps: pd.Series,
+    timeframe: str,
+    calendar: NSECalendar,
+) -> float | None:
+    if timestamps.empty:
+        return None
+    tf = timeframe.lower().strip()
+
+    if tf != "1d":
+        deltas = timestamps.diff().dropna()
+        return _safe_minutes(deltas.max() if not deltas.empty else None)
+
+    observed_days = sorted({ts.date() for ts in timestamps.dt.normalize().dropna()})
+    if len(observed_days) <= 1:
+        return None
+
+    # Trading-day-aware gap:
+    # contiguous trading sessions => 1 day gap (1440m), regardless of weekends/holidays.
+    largest = 0.0
+    for prev_day, curr_day in zip(observed_days, observed_days[1:], strict=False):
+        trading_days = calendar.trading_days_between(start=prev_day, end=curr_day)
+        trading_steps = max(len(trading_days) - 1, 0)
+        gap_minutes = float(trading_steps) * 1440.0
+        if gap_minutes > largest:
+            largest = gap_minutes
+
+    return largest if largest > 0 else None
 
 
 def summarize_issue_count(report: CandleQualityReport) -> int:

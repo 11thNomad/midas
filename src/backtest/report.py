@@ -8,6 +8,7 @@ from pathlib import Path
 import pandas as pd
 
 from src.backtest.engine import BacktestResult
+from src.signals.option_chain_features import option_feature_artifact_from_snapshots
 
 
 def write_backtest_report(
@@ -24,6 +25,7 @@ def write_backtest_report(
     equity_path = out_dir / f"{run_name}_equity.csv"
     regimes_path = out_dir / f"{run_name}_regimes.csv"
     signal_snapshots_path = out_dir / f"{run_name}_signal_snapshots.csv"
+    option_features_path = out_dir / f"{run_name}_option_features.csv"
     html_path = out_dir / f"{run_name}_report.html"
 
     metrics_path.write_text(json.dumps(result.metrics, indent=2, sort_keys=True))
@@ -31,6 +33,10 @@ def write_backtest_report(
     _write_csv(result.equity_curve, equity_path)
     _write_csv(result.regimes, regimes_path)
     _write_csv(result.signal_snapshots, signal_snapshots_path)
+    _write_csv(
+        option_feature_artifact_from_snapshots(result.signal_snapshots),
+        option_features_path,
+    )
     html_path.write_text(_render_html(result.metrics))
 
     return {
@@ -39,6 +45,7 @@ def write_backtest_report(
         "equity_csv": str(equity_path),
         "regimes_csv": str(regimes_path),
         "signal_snapshots_csv": str(signal_snapshots_path),
+        "option_features_csv": str(option_features_path),
         "html_report": str(html_path),
     }
 

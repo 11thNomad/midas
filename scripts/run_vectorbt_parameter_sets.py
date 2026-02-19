@@ -31,7 +31,8 @@ from src.backtest import (
     run_vectorbt_walk_forward,
     select_vectorbt_fee_profiles,
 )
-from src.data.store import DataStore
+from src.data.candle_access import build_candle_stores, read_candles
+from src.data.option_chain_quality import OptionChainQualityThresholds
 from src.regime.classifier import RegimeThresholds
 from src.regime.persistence import SignalSnapshotStore
 
@@ -173,6 +174,9 @@ def summarize_set_robustness(leaderboard: pd.DataFrame, *, walk_forward: bool) -
 def main() -> int:
     args = parse_args()
     settings = load_settings(args.settings)
+    chain_quality_thresholds = OptionChainQualityThresholds.from_config(
+        settings.get("data_quality", {}).get("option_chain", {})
+    )
     backtest_cfg = settings.get("backtest", {})
     default_fee_profile, all_fee_profiles = parse_vectorbt_fee_profiles(backtest_cfg)
     selected_profiles = select_vectorbt_fee_profiles(
@@ -188,14 +192,15 @@ def main() -> int:
     end = args.end or parse_date(str(backtest_cfg.get("end_date", "2025-12-31")))
 
     cache_dir = REPO_ROOT / str(settings.get("data", {}).get("cache_dir", "data/cache"))
-    store = DataStore(base_dir=str(cache_dir))
+    candle_stores = build_candle_stores(settings=settings, repo_root=REPO_ROOT)
+    store = candle_stores.raw
     snapshot_store = SignalSnapshotStore(base_dir=str(cache_dir))
     out_dir = resolve_output_dir(raw_output_dir=args.output_dir, run_prefix="vectorbt_paramsets")
     details_dir = out_dir / "details"
     details_dir.mkdir(parents=True, exist_ok=True)
 
-    candles = store.read_time_series(
-        "candles",
+    candles, candle_source = read_candles(
+        stores=candle_stores,
         symbol=args.symbol,
         timeframe=args.timeframe,
         start=start,
@@ -204,6 +209,7 @@ def main() -> int:
     if candles.empty:
         print("No candles found for requested window.")
         return 1
+    print(f"candles_source={candle_source}")
 
     snapshots = snapshot_store.read_snapshots(
         symbol=args.symbol,
@@ -246,6 +252,7 @@ def main() -> int:
             fii_df=fii,
             usdinr_df=usdinr,
             option_chain_df=option_chain,
+            chain_quality_thresholds=chain_quality_thresholds,
         )
 
     param_sets = load_parameter_set_config(args.parameter_sets)

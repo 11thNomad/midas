@@ -10,6 +10,7 @@ import pandas as pd
 
 from src.backtest.metrics import summarize_backtest
 from src.backtest.simulator import FillSimulator
+from src.data.option_chain_quality import OptionChainQualityThresholds
 from src.regime.classifier import RegimeClassifier
 from src.risk.circuit_breaker import CircuitBreaker
 from src.signals.contracts import SignalSnapshotDTO, frame_from_signal_snapshots
@@ -40,6 +41,9 @@ class BacktestEngine:
     minimum_trade_count: int = 50
     circuit_breaker: CircuitBreaker | None = None
     fill_on: str = "open"
+    chain_quality_thresholds: OptionChainQualityThresholds = field(
+        default_factory=OptionChainQualityThresholds
+    )
 
     def run(
         self,
@@ -135,6 +139,7 @@ class BacktestEngine:
                 ),
                 regime=self.classifier.current_regime.value,
                 thresholds=self.classifier.thresholds,
+                chain_quality_thresholds=self.chain_quality_thresholds,
                 source="backtest_engine",
             )
             regime = self.classifier.classify(regime_signals)

@@ -26,6 +26,8 @@ from src.backtest import (
     write_backtest_report,
     write_walkforward_report,
 )
+from src.data.candle_access import CandleStores, build_candle_stores, read_candles
+from src.data.option_chain_quality import OptionChainQualityThresholds
 from src.data.store import DataStore
 from src.regime.classifier import RegimeClassifier, RegimeThresholds
 from src.risk.circuit_breaker import CircuitBreaker
@@ -203,22 +205,28 @@ def build_strategy(
 
 def _load_symbol_data(
     *,
-    store: DataStore,
+    candle_stores: CandleStores,
+    raw_store: DataStore,
     symbol: str,
     timeframe: str,
     start: datetime,
     end: datetime,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    candles = store.read_time_series(
-        "candles", symbol=symbol, timeframe=timeframe, start=start, end=end
+    candles, candle_source = read_candles(
+        stores=candle_stores,
+        symbol=symbol,
+        timeframe=timeframe,
+        start=start,
+        end=end,
     )
     if not candles.empty:
         candles["timestamp"] = pd.to_datetime(candles["timestamp"], errors="coerce")
         candles = (
             candles.dropna(subset=["timestamp"]).sort_values("timestamp").reset_index(drop=True)
         )
+    print(f"  candles_source={candle_source}")
 
-    option_chain = store.read_time_series(
+    option_chain = raw_store.read_time_series(
         "option_chain",
         symbol=symbol,
         timeframe=timeframe,
@@ -240,6 +248,9 @@ def _build_engine(
     minimum_trade_count: int,
 ) -> BacktestEngine:
     risk_cfg = settings.get("risk", {})
+    chain_quality_thresholds = OptionChainQualityThresholds.from_config(
+        settings.get("data_quality", {}).get("option_chain", {})
+    )
     return BacktestEngine(
         classifier=RegimeClassifier(
             thresholds=RegimeThresholds.from_config(settings.get("regime", {}))
@@ -257,6 +268,7 @@ def _build_engine(
             max_drawdown_pct=float(risk_cfg.get("max_drawdown_pct", 15.0) or 15.0),
             max_open_positions=int(risk_cfg.get("max_open_positions", 4) or 4),
         ),
+        chain_quality_thresholds=chain_quality_thresholds,
     )
 
 
@@ -549,18 +561,18 @@ def main() -> int:
     strategy_ids = resolve_strategies(args.strategies)
     symbols = resolve_symbols(args.symbol.upper(), args.symbols)
 
-    cache_dir = REPO_ROOT / settings.get("data", {}).get("cache_dir", "data/cache")
-    store = DataStore(base_dir=str(cache_dir))
+    candle_stores = build_candle_stores(settings=settings, repo_root=REPO_ROOT)
+    raw_store = candle_stores.raw
 
     backtest_cfg = settings.get("backtest", {})
     start = args.start or parse_date(backtest_cfg.get("start_date", "2022-01-01"))
     end = args.end or parse_date(backtest_cfg.get("end_date", "2025-12-31"))
     load_start = start - timedelta(days=max(int(args.indicator_warmup_days), 0))
 
-    vix = store.read_time_series(
+    vix = raw_store.read_time_series(
         "vix", symbol="INDIAVIX", timeframe="1d", start=load_start, end=end
     )
-    fii = store.read_time_series(
+    fii = raw_store.read_time_series(
         "fii_dii",
         symbol="NSE",
         timeframe="1d",
@@ -569,7 +581,7 @@ def main() -> int:
         timestamp_col="date",
     )
     usdinr_symbol = str(settings.get("market", {}).get("usdinr_symbol", "USDINR")).upper()
-    usdinr = store.read_time_series(
+    usdinr = raw_store.read_time_series(
         "candles", symbol=usdinr_symbol, timeframe="1d", start=load_start, end=end
     )
 
@@ -619,7 +631,8 @@ def main() -> int:
 
     for symbol in symbols:
         candles, option_chain = _load_symbol_data(
-            store=store,
+            candle_stores=candle_stores,
+            raw_store=raw_store,
             symbol=symbol,
             timeframe=args.timeframe,
             start=load_start,

@@ -13,6 +13,7 @@ from src.backtest.engine import BacktestResult
 from src.backtest.hybrid import HybridConfig, run_hybrid_schedule_backtest
 from src.backtest.simulator import FillSimulator
 from src.backtest.walkforward import aggregate_walk_forward_metrics, generate_walk_forward_windows
+from src.data.option_chain_quality import OptionChainQualityThresholds
 from src.regime.classifier import RegimeClassifier, RegimeThresholds
 from src.signals.contracts import frame_from_signal_snapshots, signal_snapshot_from_mapping
 from src.signals.pipeline import build_feature_context
@@ -47,6 +48,7 @@ def build_snapshots_from_market_data(
     fii_df: pd.DataFrame | None = None,
     usdinr_df: pd.DataFrame | None = None,
     option_chain_df: pd.DataFrame | None = None,
+    chain_quality_thresholds: OptionChainQualityThresholds | None = None,
 ) -> pd.DataFrame:
     if candles.empty:
         return pd.DataFrame()
@@ -96,6 +98,7 @@ def build_snapshots_from_market_data(
             ),
             regime=classifier.current_regime.value,
             thresholds=thresholds,
+            chain_quality_thresholds=chain_quality_thresholds,
             source="vectorbt_research",
         )
         regime = classifier.classify(regime_signals)
@@ -355,6 +358,7 @@ def run_hybrid_from_schedule(
     fii_df: pd.DataFrame | None = None,
     usdinr_df: pd.DataFrame | None = None,
     option_chain_df: pd.DataFrame | None = None,
+    chain_quality_thresholds: OptionChainQualityThresholds | None = None,
 ) -> dict[str, float]:
     result = run_hybrid_from_schedule_result(
         candles=candles,
@@ -368,6 +372,7 @@ def run_hybrid_from_schedule(
         fii_df=fii_df,
         usdinr_df=usdinr_df,
         option_chain_df=option_chain_df,
+        chain_quality_thresholds=chain_quality_thresholds,
     )
     return result.metrics
 
@@ -385,6 +390,7 @@ def run_hybrid_from_schedule_result(
     fii_df: pd.DataFrame | None = None,
     usdinr_df: pd.DataFrame | None = None,
     option_chain_df: pd.DataFrame | None = None,
+    chain_quality_thresholds: OptionChainQualityThresholds | None = None,
 ) -> BacktestResult:
     return run_hybrid_schedule_backtest(
         candles=candles,
@@ -401,6 +407,7 @@ def run_hybrid_from_schedule_result(
         fii_df=fii_df,
         usdinr_df=usdinr_df,
         option_chain_df=option_chain_df,
+        chain_quality_thresholds=chain_quality_thresholds,
     )
 
 
