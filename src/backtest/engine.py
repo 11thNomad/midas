@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import copy
+import json
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, cast
@@ -25,6 +27,7 @@ class BacktestResult:
     regimes: pd.DataFrame
     metrics: dict[str, float]
     signal_snapshots: pd.DataFrame = field(default_factory=pd.DataFrame)
+    decisions: pd.DataFrame = field(default_factory=pd.DataFrame)
 
 
 @dataclass
@@ -62,6 +65,7 @@ class BacktestEngine:
                 fills=empty,
                 regimes=empty,
                 signal_snapshots=empty,
+                decisions=empty,
                 metrics=summarize_backtest(
                     equity_curve=empty,
                     fills=empty,
@@ -89,6 +93,7 @@ class BacktestEngine:
         equity_rows: list[dict[str, Any]] = []
         regime_rows: list[dict[str, Any]] = []
         signal_snapshot_rows: list[SignalSnapshotDTO] = []
+        decision_rows: list[dict[str, Any]] = []
         previous_regime = self.classifier.current_regime
         previous_chain_asof: pd.DataFrame | None = None
         analysis_cutoff = pd.Timestamp(analysis_start) if analysis_start is not None else None
@@ -166,6 +171,10 @@ class BacktestEngine:
                 )
             )
 
+            can_trade = (
+                self.circuit_breaker.can_trade() if self.circuit_breaker is not None else True
+            )
+            position_before = copy.deepcopy(self.strategy.state.current_position)
             signal = self._next_signal(
                 timestamp=ts,
                 regime=regime,
@@ -174,13 +183,32 @@ class BacktestEngine:
                 vix_value=vix_value,
                 option_chain=chain_asof,
                 underlying_price=close_price,
+                can_trade=can_trade,
             )
             previous_regime = regime
 
+            if signal is not None:
+                decision_rows.append(
+                    {
+                        "timestamp": ts,
+                        "strategy_name": signal.strategy_name,
+                        "signal_type": signal.signal_type.value,
+                        "instrument": signal.instrument,
+                        "regime": signal.regime.value,
+                        "is_actionable": float(signal.is_actionable),
+                        "can_trade": float(can_trade),
+                        "orders_count": len(signal.orders or []),
+                        "reason": signal.reason,
+                        "indicators_json": json.dumps(
+                            signal.indicators, sort_keys=True, default=str
+                        ),
+                        "greeks_snapshot_json": json.dumps(
+                            signal.greeks_snapshot, sort_keys=True, default=str
+                        ),
+                    }
+                )
+
             fill_reference_price = open_price if self.fill_on == "open" else close_price
-            can_trade = (
-                self.circuit_breaker.can_trade() if self.circuit_breaker is not None else True
-            )
             if signal is not None and signal.is_actionable:
                 is_exit = signal.signal_type == SignalType.EXIT
                 if not can_trade and not is_exit:
@@ -202,6 +230,10 @@ class BacktestEngine:
                     timestamp=ts,
                     price_lookup=mark_prices,
                 )
+                if not fills:
+                    # Keep strategy state aligned to realized execution.
+                    self.strategy.state.current_position = position_before
+                    continue
                 for fill in fills:
                     instrument = str(fill["instrument"])
                     qty = int(fill["quantity"])
@@ -226,6 +258,8 @@ class BacktestEngine:
 
                     last_price_by_instrument[instrument] = fill_price
                     fill_rows.append(fill)
+                if signal.signal_type == SignalType.EXIT:
+                    self.strategy.state.current_position = None
 
             equity = self._mark_to_market(
                 cash=cash,
@@ -259,6 +293,7 @@ class BacktestEngine:
         equity_df = pd.DataFrame(equity_rows)
         regimes_df = pd.DataFrame(regime_rows)
         signal_snapshots_df = frame_from_signal_snapshots(signal_snapshot_rows)
+        decisions_df = pd.DataFrame(decision_rows)
         metrics = summarize_backtest(
             equity_curve=equity_df,
             fills=fills_df,
@@ -273,6 +308,7 @@ class BacktestEngine:
             fills=fills_df,
             regimes=regimes_df,
             signal_snapshots=signal_snapshots_df,
+            decisions=decisions_df,
             metrics=metrics,
         )
 
@@ -286,6 +322,7 @@ class BacktestEngine:
         vix_value: float,
         option_chain: pd.DataFrame | None,
         underlying_price: float,
+        can_trade: bool,
     ) -> Signal | None:
         market_data = {
             "timestamp": timestamp,
@@ -294,6 +331,15 @@ class BacktestEngine:
             "option_chain": option_chain,
             "underlying_price": underlying_price,
         }
+        if self.strategy.state.current_position is None and not can_trade:
+            return Signal(
+                signal_type=SignalType.NO_SIGNAL,
+                strategy_name=self.strategy.name,
+                instrument=str(self.strategy.config.get("instrument", "NIFTY")),
+                timestamp=timestamp,
+                regime=regime,
+                reason="Circuit breaker halted new entries",
+            )
         if self.strategy.state.current_position is not None:
             exit_signal = self.strategy.get_exit_conditions(market_data)
             if exit_signal is not None and exit_signal.is_actionable:

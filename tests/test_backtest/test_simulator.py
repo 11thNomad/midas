@@ -52,3 +52,17 @@ def test_simulator_models_full_fee_stack():
     assert len(fills) == 1
     assert fills[0]["fees"] > 20.0
     assert fills[0]["stt"] > 0.0
+
+
+def test_simulator_drops_option_fills_without_option_price_lookup():
+    sim = FillSimulator(slippage_pct=0.0, commission_per_order=0.0)
+    signal = Signal(
+        signal_type=SignalType.ENTRY_SHORT,
+        strategy_name="x",
+        instrument="NIFTY",
+        timestamp=datetime(2026, 1, 1, 9, 15),
+        orders=[{"symbol": "NIFTY_20260115_22000CE", "action": "SELL", "quantity": 1}],
+        regime=RegimeState.LOW_VOL_TRENDING,
+    )
+    fills = sim.simulate(signal, close_price=100.0, timestamp=signal.timestamp, price_lookup={})
+    assert fills == []

@@ -5,6 +5,44 @@ from __future__ import annotations
 from typing import Literal
 
 
+def mibian_implied_iv(
+    *,
+    spot: float,
+    strike: float,
+    rate_pct: float,
+    days_to_expiry: int,
+    option_price: float,
+    option_type: Literal["CE", "PE"],
+) -> float | None:
+    """Solve implied volatility (%) from option price using mibian."""
+    if spot <= 0 or strike <= 0 or option_price <= 0 or days_to_expiry <= 0:
+        return None
+
+    try:
+        import mibian
+    except ImportError:
+        return None
+
+    try:
+        if option_type.upper() == "PE":
+            bs = mibian.BS(
+                [float(spot), float(strike), float(rate_pct), int(days_to_expiry)],
+                putPrice=float(option_price),
+            )
+        else:
+            bs = mibian.BS(
+                [float(spot), float(strike), float(rate_pct), int(days_to_expiry)],
+                callPrice=float(option_price),
+            )
+    except Exception:
+        return None
+
+    iv = float(getattr(bs, "impliedVolatility", 0.0) or 0.0)
+    if not (0.01 <= iv <= 300.0):
+        return None
+    return iv
+
+
 def mibian_greeks(
     *,
     spot: float,

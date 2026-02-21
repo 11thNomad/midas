@@ -445,3 +445,62 @@ def test_engine_allows_exit_when_circuit_breaker_blocks_new_trades():
     result = engine.run(candles=candles)
     assert len(result.fills) == 1
     assert result.fills.iloc[0]["side"] == "SELL"
+
+
+def test_engine_does_not_generate_new_entries_when_circuit_breaker_halts():
+    candles = pd.DataFrame(
+        {
+            "timestamp": pd.date_range("2026-01-01", periods=2, freq="D"),
+            "open": [100, 100],
+            "high": [101, 101],
+            "low": [99, 99],
+            "close": [100, 100],
+        }
+    )
+
+    class EntryMutatingStrategy(BaseStrategy):
+        def __init__(self, name: str, config: dict):
+            super().__init__(name, config)
+            self.generate_calls = 0
+
+        def generate_signal(self, market_data: dict, regime: RegimeState) -> Signal:
+            self.generate_calls += 1
+            self.state.current_position = {"symbol": "NIFTY", "quantity": 1}
+            return Signal(
+                signal_type=SignalType.ENTRY_LONG,
+                strategy_name=self.name,
+                instrument="NIFTY",
+                timestamp=market_data["timestamp"],
+                orders=[{"symbol": "NIFTY", "action": "BUY", "quantity": 1}],
+                regime=regime,
+            )
+
+        def get_exit_conditions(self, market_data: dict) -> Signal | None:
+            return None
+
+        def compute_position_size(self, capital: float, risk_per_trade: float) -> int:
+            return 1
+
+    class HaltedBreaker:
+        def can_trade(self) -> bool:
+            return False
+
+        def update(self, **kwargs):  # noqa: ANN003 - simple test double
+            return None
+
+    strategy = EntryMutatingStrategy(
+        name="entry_mutating",
+        config={"instrument": "NIFTY", "active_regimes": [RegimeState.LOW_VOL_RANGING.value]},
+    )
+    engine = BacktestEngine(
+        classifier=RegimeClassifier(thresholds=RegimeThresholds()),
+        strategy=strategy,
+        simulator=FillSimulator(slippage_pct=0.0, commission_per_order=0.0),
+        initial_capital=1000.0,
+        circuit_breaker=HaltedBreaker(),  # type: ignore[arg-type]
+    )
+
+    result = engine.run(candles=candles)
+    assert len(result.fills) == 0
+    assert strategy.generate_calls == 0
+    assert strategy.state.current_position is None

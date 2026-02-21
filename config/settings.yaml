@@ -109,6 +109,8 @@ strategies:
     # Entry parameters
     call_delta: 0.15        # Sell call at ~15 delta
     put_delta: -0.15        # Sell put at ~15 delta
+    fallback_iv_pct: 20.0   # Used for local greek approximation when IV solve fails
+    lot_size: 50            # NIFTY lot size for quantity scaling
     wing_width: 100         # Points between sold and bought strikes
     dte_min: 5              # Minimum days to expiry at entry
     dte_max: 14             # Maximum days to expiry at entry
@@ -117,6 +119,8 @@ strategies:
     atr_multiple: 1.5       # Short strike distance from spot in ATR units
     min_premium: 15.0       # Minimum expected net credit per unit
     entry_days: [0, 1]      # 0=Monday, 1=Tuesday
+    enable_time_exit: true  # Force calendar exit approximation in daily backtest
+    time_exit_day: Wednesday
     # Exit parameters
     profit_target_pct: 50   # Close at 50% of max profit
     stop_loss_pct: 100      # Close if loss equals premium received
@@ -242,8 +246,8 @@ backtest:
     min_metric_mean: 0.0
     max_drawdown_abs_worst: 12.0
     min_eligible_profile_share: 1.0
-  stt_pct: 0.0125           # Securities Transaction Tax (sell side, options)
-  exchange_txn_charges_pct: 0.053  # NSE F&O transaction charges
+  stt_pct: 0.1              # STT on sell premium (Zerodha/NSE options)
+  exchange_txn_charges_pct: 0.03503  # NSE options transaction charges
   gst_pct: 18.0             # GST on brokerage
   sebi_fee_pct: 0.0001      # SEBI turnover fee
   stamp_duty_pct: 0.003     # Stamp duty

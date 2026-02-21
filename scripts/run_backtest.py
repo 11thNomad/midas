@@ -588,9 +588,9 @@ def main() -> int:
     simulator = FillSimulator(
         slippage_pct=float(backtest_cfg.get("slippage_pct", 0.05) or 0.05),
         commission_per_order=float(backtest_cfg.get("commission_per_order", 20.0) or 20.0),
-        stt_pct=float(backtest_cfg.get("stt_pct", 0.0125) or 0.0125),
+        stt_pct=float(backtest_cfg.get("stt_pct", 0.1) or 0.1),
         exchange_txn_charges_pct=float(
-            backtest_cfg.get("exchange_txn_charges_pct", 0.053) or 0.053
+            backtest_cfg.get("exchange_txn_charges_pct", 0.03503) or 0.03503
         ),
         gst_pct=float(backtest_cfg.get("gst_pct", 18.0) or 18.0),
         sebi_fee_pct=float(backtest_cfg.get("sebi_fee_pct", 0.0001) or 0.0001),
