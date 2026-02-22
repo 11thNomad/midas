@@ -18,7 +18,6 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from src.backtest import (
     BacktestEngine,
-    BacktestPrecomputedData,
     FillSimulator,
     aggregate_cross_instrument_results,
     aggregate_walk_forward_metrics,
@@ -107,11 +106,6 @@ def parse_args() -> argparse.Namespace:
         "--no-timestamp-subdir",
         action="store_true",
         help="Write artifacts directly in --output-dir instead of run timestamp subfolder.",
-    )
-    parser.add_argument(
-        "--no-precompute",
-        action="store_true",
-        help="Disable shared precomputed contexts and use fully dynamic per-strategy computation.",
     )
     return parser.parse_args()
 
@@ -304,7 +298,6 @@ def _run_single_backtest(
     output_dir: str,
     run_name: str,
     write_report: bool,
-    precomputed_data: BacktestPrecomputedData | None = None,
 ) -> tuple[dict[str, Any], dict[str, str]]:
     engine = _build_engine(
         settings=settings,
@@ -324,7 +317,6 @@ def _run_single_backtest(
         usdinr_df=usdinr,
         option_chain_df=option_chain,
         analysis_start=analysis_start,
-        precomputed_data=precomputed_data,
     )
     paths: dict[str, str] = {}
     if write_report:
@@ -356,7 +348,6 @@ def _run_walk_forward_backtest(
     write_report: bool,
     timeframe: str,
     indicator_warmup_days: int = 0,
-    precomputed_data: BacktestPrecomputedData | None = None,
 ) -> tuple[dict[str, Any], dict[str, str]]:
     # Walk-forward summary is numeric today, but callers consume a shared metric map type.
     windows = generate_walk_forward_windows(
@@ -403,7 +394,6 @@ def _run_walk_forward_backtest(
             usdinr_df=usdinr,
             option_chain_df=option_chain,
             analysis_start=window.test_start,
-            precomputed_data=precomputed_data,
         )
         forced_liq_flag = False
         run_integrity = result.metrics.get("run_integrity")
@@ -551,7 +541,6 @@ def _run_strategy(
     write_report: bool,
     timeframe: str,
     indicator_warmup_days: int = 0,
-    precomputed_data: BacktestPrecomputedData | None = None,
 ) -> tuple[dict[str, Any], dict[str, str]]:
     if walk_forward:
         return _run_walk_forward_backtest(
@@ -577,7 +566,6 @@ def _run_strategy(
             write_report=write_report,
             timeframe=timeframe,
             indicator_warmup_days=indicator_warmup_days,
-            precomputed_data=precomputed_data,
         )
     return _run_single_backtest(
         settings=settings,
@@ -598,7 +586,6 @@ def _run_strategy(
         output_dir=output_dir,
         run_name=run_name,
         write_report=write_report,
-        precomputed_data=precomputed_data,
     )
 
 
@@ -672,11 +659,6 @@ def main() -> int:
     sensitivity_multipliers = [
         float(v) for v in sensitivity_cfg.get("multipliers", [0.8, 1.0, 1.2])
     ]
-    regime_thresholds = RegimeThresholds.from_config(settings.get("regime", {}))
-    chain_quality_thresholds = OptionChainQualityThresholds.from_config(
-        settings.get("data_quality", {}).get("option_chain", {})
-    )
-
     print("=" * 72)
     print("Backtest Run")
     print("=" * 72)
@@ -685,7 +667,6 @@ def main() -> int:
     print(f"output_dir={output_dir_path}")
     print(f"strategies={strategy_ids}")
     print(f"walk_forward={args.walk_forward} sensitivity={sensitivity_enabled}")
-    print(f"precompute={not args.no_precompute}")
 
     runs_completed = 0
     cross_rows: list[dict] = []
@@ -703,24 +684,6 @@ def main() -> int:
         if candles.empty:
             print(f"\n[{symbol}] No candle data in cache for requested window; skipping symbol")
             continue
-
-        precomputed_data: BacktestPrecomputedData | None = None
-        if not args.no_precompute:
-            precomputed_data = BacktestEngine.prepare_precomputed_data(
-                candles=candles,
-                thresholds=regime_thresholds,
-                symbol=symbol,
-                timeframe=args.timeframe,
-                vix_df=vix,
-                fii_df=fii,
-                usdinr_df=usdinr,
-                option_chain_df=option_chain,
-                chain_quality_thresholds=chain_quality_thresholds,
-            )
-            print(
-                f"\n[{symbol}] precomputed contexts={len(precomputed_data.bar_contexts)} "
-                f"chain_snapshots={len(precomputed_data.chain_timestamps)}"
-            )
 
         for strategy_id in strategy_ids:
             strategy, initial_capital, strategy_cfg = build_strategy(
@@ -759,7 +722,6 @@ def main() -> int:
                 write_report=True,
                 timeframe=args.timeframe,
                 indicator_warmup_days=max(int(args.indicator_warmup_days), 0),
-                precomputed_data=precomputed_data,
             )
             runs_completed += 1
 
@@ -857,7 +819,6 @@ def main() -> int:
                     write_report=False,
                     timeframe=args.timeframe,
                     indicator_warmup_days=max(int(args.indicator_warmup_days), 0),
-                    precomputed_data=precomputed_data,
                 )
                 variant_rows.append(
                     {

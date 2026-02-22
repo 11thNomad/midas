@@ -1,6 +1,6 @@
 """Backtest layer exports."""
 
-from src.backtest.engine import BacktestEngine, BacktestPrecomputedData, BacktestResult
+from src.backtest.engine import BacktestEngine, BacktestResult
 from src.backtest.fee_profiles import (
     VectorBTFeeProfile,
     parse_vectorbt_fee_profiles,
@@ -58,7 +58,6 @@ from src.backtest.walkforward import (
 
 __all__ = [
     "BacktestEngine",
-    "BacktestPrecomputedData",
     "BacktestResult",
     "HybridConfig",
     "FillSimulator",
