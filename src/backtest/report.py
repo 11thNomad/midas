@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
@@ -88,8 +89,11 @@ def _write_csv(df: pd.DataFrame, path: Path) -> None:
         df.to_csv(path, index=False)
 
 
-def _render_html(metrics: dict[str, float]) -> str:
-    rows = "\n".join(f"<tr><td>{k}</td><td>{v:.6f}</td></tr>" for k, v in sorted(metrics.items()))
+def _render_html(metrics: dict[str, Any]) -> str:
+    rows = "\n".join(
+        f"<tr><td>{k}</td><td>{_format_metric_value(v)}</td></tr>"
+        for k, v in sorted(metrics.items())
+    )
     return (
         "<html><head><title>Backtest Report</title></head><body>"
         "<h1>Backtest Summary</h1>"
@@ -98,6 +102,14 @@ def _render_html(metrics: dict[str, float]) -> str:
         f"{rows}"
         "</table></body></html>"
     )
+
+
+def _format_metric_value(value: Any) -> str:
+    if isinstance(value, bool):
+        return str(value).lower()
+    if isinstance(value, (int, float)):
+        return f"{float(value):.6f}"
+    return json.dumps(value, sort_keys=True)
 
 
 def _render_walkforward_html(

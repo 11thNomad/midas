@@ -16,6 +16,10 @@ def test_summarize_backtest_returns_core_fields():
     m = summarize_backtest(equity_curve=equity, fills=fills, initial_capital=1000.0)
     assert "total_return_pct" in m
     assert "max_drawdown_pct" in m
+    assert "sharpe_daily_rf7" in m
+    assert "sharpe_trade_rf0" in m
+    assert "trade_win_rate_pct" in m
+    assert "trade_profit_factor" in m
     assert m["fees_paid"] == 40.0
 
 
@@ -64,3 +68,25 @@ def test_summarize_backtest_includes_anti_overfit_metrics():
     assert 0.0 <= m["monte_carlo_permutation_pvalue"] <= 1.0
     assert m["trade_count_estimate"] == 3.0
     assert m["min_trade_count_pass"] == 1.0
+
+
+def test_summarize_backtest_includes_run_integrity_payload():
+    equity = pd.DataFrame(
+        {
+            "timestamp": pd.date_range("2026-01-01", periods=2, freq="D"),
+            "equity": [1000.0, 1005.0],
+        }
+    )
+    fills = pd.DataFrame({"fees": [1.0]})
+    run_integrity = {
+        "forced_liquidations": {"count": 0, "symbols": [], "threshold": 1, "flag": False},
+        "unfilled_exits": {"attempted": 0, "filled": 0, "unfilled": 0, "failure_reasons": {}},
+    }
+    m = summarize_backtest(
+        equity_curve=equity,
+        fills=fills,
+        initial_capital=1000.0,
+        run_integrity=run_integrity,
+    )
+    assert "run_integrity" in m
+    assert m["run_integrity"] == run_integrity

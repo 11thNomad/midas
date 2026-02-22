@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 import yaml
@@ -51,6 +53,8 @@ DEFAULT_SENSITIVITY_PARAMS = {
     "baseline_trend": ["adx_min", "vix_max"],
     "regime_probe": ["lots"],
 }
+
+LOGGER = logging.getLogger(__name__)
 
 
 def parse_date(value: str) -> datetime:
@@ -252,6 +256,7 @@ def _build_engine(
     risk_free_rate_annual: float,
     monte_carlo_permutations: int,
     minimum_trade_count: int,
+    number_of_symbols_in_run: int,
 ) -> BacktestEngine:
     risk_cfg = settings.get("risk", {})
     chain_quality_thresholds = OptionChainQualityThresholds.from_config(
@@ -268,6 +273,7 @@ def _build_engine(
         risk_free_rate_annual=risk_free_rate_annual,
         monte_carlo_permutations=monte_carlo_permutations,
         minimum_trade_count=minimum_trade_count,
+        number_of_symbols_in_run=max(int(number_of_symbols_in_run), 1),
         circuit_breaker=CircuitBreaker(
             initial_capital=initial_capital,
             max_daily_loss_pct=float(risk_cfg.get("max_daily_loss_pct", 3.0) or 3.0),
@@ -294,11 +300,12 @@ def _run_single_backtest(
     risk_free_rate_annual: float,
     monte_carlo_permutations: int,
     minimum_trade_count: int,
+    number_of_symbols_in_run: int,
     output_dir: str,
     run_name: str,
     write_report: bool,
     precomputed_data: BacktestPrecomputedData | None = None,
-) -> tuple[dict[str, float], dict[str, str]]:
+) -> tuple[dict[str, Any], dict[str, str]]:
     engine = _build_engine(
         settings=settings,
         simulator=simulator,
@@ -308,6 +315,7 @@ def _run_single_backtest(
         risk_free_rate_annual=risk_free_rate_annual,
         monte_carlo_permutations=monte_carlo_permutations,
         minimum_trade_count=minimum_trade_count,
+        number_of_symbols_in_run=number_of_symbols_in_run,
     )
     result = engine.run(
         candles=candles,
@@ -342,13 +350,15 @@ def _run_walk_forward_backtest(
     risk_free_rate_annual: float,
     monte_carlo_permutations: int,
     minimum_trade_count: int,
+    number_of_symbols_in_run: int,
     output_dir: str,
     run_name: str,
     write_report: bool,
     timeframe: str,
     indicator_warmup_days: int = 0,
     precomputed_data: BacktestPrecomputedData | None = None,
-) -> tuple[dict[str, float], dict[str, str]]:
+) -> tuple[dict[str, Any], dict[str, str]]:
+    # Walk-forward summary is numeric today, but callers consume a shared metric map type.
     windows = generate_walk_forward_windows(
         start=start,
         end=end,
@@ -374,6 +384,7 @@ def _run_walk_forward_backtest(
             risk_free_rate_annual=risk_free_rate_annual,
             monte_carlo_permutations=monte_carlo_permutations,
             minimum_trade_count=minimum_trade_count,
+            number_of_symbols_in_run=number_of_symbols_in_run,
         )
         test_candles = candles.loc[
             (
@@ -394,13 +405,35 @@ def _run_walk_forward_backtest(
             analysis_start=window.test_start,
             precomputed_data=precomputed_data,
         )
+        forced_liq_flag = False
+        run_integrity = result.metrics.get("run_integrity")
+        if isinstance(run_integrity, dict):
+            forced_liq = run_integrity.get("forced_liquidations")
+            if isinstance(forced_liq, dict):
+                forced_liq_flag = bool(forced_liq.get("flag", False))
+                if forced_liq_flag:
+                    LOGGER.warning(
+                        "Walk-forward fold has forced liquidation integrity flag",
+                        extra={
+                            "fold": i,
+                            "count": forced_liq.get("count"),
+                            "threshold": forced_liq.get("threshold"),
+                            "symbols": forced_liq.get("symbols"),
+                        },
+                    )
+        numeric_metrics = {
+            k: float(v)
+            for k, v in result.metrics.items()
+            if isinstance(v, (int, float)) and not isinstance(v, bool)
+        }
         row = {
             "fold": i,
             "train_start": window.train_start.isoformat(),
             "train_end": window.train_end.isoformat(),
             "test_start": window.test_start.isoformat(),
             "test_end": window.test_end.isoformat(),
-            **result.metrics,
+            "forced_liquidation_flag": float(forced_liq_flag),
+            **numeric_metrics,
         }
         if not result.regimes.empty:
             regime_counts = result.regimes["regime"].value_counts(normalize=True)
@@ -447,13 +480,21 @@ def _run_walk_forward_backtest(
     return summary, paths
 
 
-def _normalized_metric(metrics: dict[str, float], *, walk_forward: bool, metric: str) -> float:
+def _normalized_metric(metrics: dict[str, Any], *, walk_forward: bool, metric: str) -> float:
     if walk_forward:
         key = f"{metric}_mean"
         if key in metrics:
-            return float(metrics[key])
+            return _metric_to_float(metrics.get(key))
     if metric in metrics:
-        return float(metrics[metric])
+        return _metric_to_float(metrics.get(metric))
+    return 0.0
+
+
+def _metric_to_float(value: Any) -> float:
+    if isinstance(value, bool):
+        return float(value)
+    if isinstance(value, (int, float)):
+        return float(value)
     return 0.0
 
 
@@ -504,13 +545,14 @@ def _run_strategy(
     risk_free_rate_annual: float,
     monte_carlo_permutations: int,
     minimum_trade_count: int,
+    number_of_symbols_in_run: int,
     output_dir: str,
     run_name: str,
     write_report: bool,
     timeframe: str,
     indicator_warmup_days: int = 0,
     precomputed_data: BacktestPrecomputedData | None = None,
-) -> tuple[dict[str, float], dict[str, str]]:
+) -> tuple[dict[str, Any], dict[str, str]]:
     if walk_forward:
         return _run_walk_forward_backtest(
             settings=settings,
@@ -529,6 +571,7 @@ def _run_strategy(
             risk_free_rate_annual=risk_free_rate_annual,
             monte_carlo_permutations=monte_carlo_permutations,
             minimum_trade_count=minimum_trade_count,
+            number_of_symbols_in_run=number_of_symbols_in_run,
             output_dir=output_dir,
             run_name=run_name,
             write_report=write_report,
@@ -551,6 +594,7 @@ def _run_strategy(
         risk_free_rate_annual=risk_free_rate_annual,
         monte_carlo_permutations=monte_carlo_permutations,
         minimum_trade_count=minimum_trade_count,
+        number_of_symbols_in_run=number_of_symbols_in_run,
         output_dir=output_dir,
         run_name=run_name,
         write_report=write_report,
@@ -709,6 +753,7 @@ def main() -> int:
                 risk_free_rate_annual=risk_free_rate_annual,
                 monte_carlo_permutations=monte_carlo_permutations,
                 minimum_trade_count=minimum_trade_count,
+                number_of_symbols_in_run=len(symbols),
                 output_dir=output_dir,
                 run_name=run_name,
                 write_report=True,
@@ -722,7 +767,10 @@ def main() -> int:
                 metrics, walk_forward=args.walk_forward, metric="total_return_pct"
             )
             sharpe = _normalized_metric(
-                metrics, walk_forward=args.walk_forward, metric="sharpe_ratio"
+                metrics, walk_forward=args.walk_forward, metric="sharpe_daily_rf7"
+            )
+            sharpe_trade_rf0 = _normalized_metric(
+                metrics, walk_forward=args.walk_forward, metric="sharpe_trade_rf0"
             )
             max_dd = _normalized_metric(
                 metrics, walk_forward=args.walk_forward, metric="max_drawdown_pct"
@@ -735,7 +783,8 @@ def main() -> int:
             print(
                 "  "
                 f"total_return_pct={total_return:.2f} "
-                f"sharpe={sharpe:.3f} "
+                f"sharpe_daily_rf7={sharpe:.3f} "
+                f"sharpe_trade_rf0={sharpe_trade_rf0:.3f} "
                 f"max_drawdown_pct={max_dd:.2f}"
             )
             for key, path in paths.items():
@@ -802,6 +851,7 @@ def main() -> int:
                     risk_free_rate_annual=risk_free_rate_annual,
                     monte_carlo_permutations=monte_carlo_permutations,
                     minimum_trade_count=minimum_trade_count,
+                    number_of_symbols_in_run=len(symbols),
                     output_dir=output_dir,
                     run_name=f"{run_name}_sens_{variant['variant_id']}",
                     write_report=False,

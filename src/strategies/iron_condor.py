@@ -423,24 +423,36 @@ class IronCondorStrategy(BaseStrategy):
                 "action": "SELL",
                 "quantity": quantity,
                 "price": self._row_price(call_short),
+                "expiry": call_short.get("expiry"),
+                "strike": float(call_short.get("strike", 0.0) or 0.0),
+                "option_type": "CE",
             },
             {
                 "symbol": self._row_symbol(put_short, instrument, "PE"),
                 "action": "SELL",
                 "quantity": quantity,
                 "price": self._row_price(put_short),
+                "expiry": put_short.get("expiry"),
+                "strike": float(put_short.get("strike", 0.0) or 0.0),
+                "option_type": "PE",
             },
             {
                 "symbol": self._row_symbol(call_hedge, instrument, "CE"),
                 "action": "BUY",
                 "quantity": quantity,
                 "price": self._row_price(call_hedge),
+                "expiry": call_hedge.get("expiry"),
+                "strike": float(call_hedge.get("strike", 0.0) or 0.0),
+                "option_type": "CE",
             },
             {
                 "symbol": self._row_symbol(put_hedge, instrument, "PE"),
                 "action": "BUY",
                 "quantity": quantity,
                 "price": self._row_price(put_hedge),
+                "expiry": put_hedge.get("expiry"),
+                "strike": float(put_hedge.get("strike", 0.0) or 0.0),
+                "option_type": "PE",
             },
         ]
         return legs, selection, None
@@ -701,13 +713,21 @@ class IronCondorStrategy(BaseStrategy):
         for leg in legs:
             action = str(leg.get("action", "")).upper()
             exit_action = "BUY" if action == "SELL" else "SELL"
-            exit_orders.append(
-                {
-                    "symbol": str(leg.get("symbol", "")),
-                    "action": exit_action,
-                    "quantity": int(leg.get("quantity", quantity) or quantity),
-                }
-            )
+            order = {
+                "symbol": str(leg.get("symbol", "")),
+                "action": exit_action,
+                "quantity": int(leg.get("quantity", quantity) or quantity),
+            }
+            expiry = leg.get("expiry")
+            strike = leg.get("strike")
+            option_type = leg.get("option_type")
+            if expiry is not None:
+                order["expiry"] = expiry
+            if strike is not None:
+                order["strike"] = strike
+            if option_type is not None:
+                order["option_type"] = option_type
+            exit_orders.append(order)
         return exit_orders
 
     @staticmethod

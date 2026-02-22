@@ -588,3 +588,80 @@ def test_precomputed_context_matches_dynamic_run_outputs():
     assert_frame_equal(dynamic.regimes, cached.regimes, check_dtype=False)
     assert_frame_equal(dynamic.signal_snapshots, cached.signal_snapshots, check_dtype=False)
     assert dynamic.metrics == cached.metrics
+
+
+def test_engine_forces_liquidation_at_window_end_and_reports_integrity():
+    candles = pd.DataFrame(
+        {
+            "timestamp": pd.date_range("2026-01-01", periods=3, freq="D"),
+            "open": [100, 101, 102],
+            "high": [101, 102, 103],
+            "low": [99, 100, 101],
+            "close": [100, 101, 102],
+        }
+    )
+
+    class EnterAndHoldStrategy(BaseStrategy):
+        def generate_signal(self, market_data: dict, regime: RegimeState) -> Signal:
+            ts = market_data["timestamp"]
+            if self.state.current_position is None:
+                self.state.current_position = {"symbol": "NIFTY", "quantity": 1}
+                return Signal(
+                    signal_type=SignalType.ENTRY_LONG,
+                    strategy_name=self.name,
+                    instrument="NIFTY",
+                    timestamp=ts,
+                    orders=[{"symbol": "NIFTY", "action": "BUY", "quantity": 1}],
+                    regime=regime,
+                )
+            return Signal(
+                signal_type=SignalType.NO_SIGNAL,
+                strategy_name=self.name,
+                instrument="NIFTY",
+                timestamp=ts,
+                regime=regime,
+            )
+
+        def get_exit_conditions(self, market_data: dict) -> Signal | None:
+            return None
+
+        def compute_position_size(self, capital: float, risk_per_trade: float) -> int:
+            return 1
+
+    strategy = EnterAndHoldStrategy(
+        name="enter_hold",
+        config={"instrument": "NIFTY", "active_regimes": [RegimeState.LOW_VOL_RANGING.value]},
+    )
+    engine = BacktestEngine(
+        classifier=RegimeClassifier(thresholds=RegimeThresholds()),
+        strategy=strategy,
+        simulator=FillSimulator(
+            slippage_pct=0.0,
+            commission_per_order=0.0,
+            stt_pct=0.0,
+            exchange_txn_charges_pct=0.0,
+            gst_pct=0.0,
+            sebi_fee_pct=0.0,
+            stamp_duty_pct=0.0,
+        ),
+        initial_capital=1000.0,
+        number_of_symbols_in_run=1,
+    )
+
+    result = engine.run(candles=candles)
+    assert "run_integrity" in result.metrics
+    integrity = result.metrics["run_integrity"]
+    assert isinstance(integrity, dict)
+    forced = integrity["forced_liquidations"]
+    assert forced["count"] == 1
+    assert forced["flag"] is False
+    assert forced["threshold"] == 1
+    assert forced["symbols"] == ["NIFTY"]
+
+    # Entry + forced exit
+    assert len(result.fills) == 2
+    assert result.fills.iloc[-1]["reason"] == "backtest_window_end"
+
+    assert "early_exit_opportunity" in result.decisions.columns
+    assert "earliest_exit_day" in result.decisions.columns
+    assert "actual_exit_pnl" in result.decisions.columns
