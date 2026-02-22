@@ -40,7 +40,11 @@ class MomentumStrategy(BaseStrategy):
         # Position management via signal direction.
         if self.state.current_position is None:
             if latest_cross > 0:
-                self.state.current_position = {"side": "LONG", "quantity": lots}
+                self.state.current_position = {
+                    "side": "LONG",
+                    "quantity": lots,
+                    "entry_regime": regime.value,
+                }
                 return Signal(
                     signal_type=SignalType.ENTRY_LONG,
                     strategy_name=self.name,
@@ -51,7 +55,11 @@ class MomentumStrategy(BaseStrategy):
                     indicators={"adx": adx_value},
                     reason="EMA bullish crossover with ADX filter",
                 )
-            self.state.current_position = {"side": "SHORT", "quantity": lots}
+            self.state.current_position = {
+                "side": "SHORT",
+                "quantity": lots,
+                "entry_regime": regime.value,
+            }
             return Signal(
                 signal_type=SignalType.ENTRY_SHORT,
                 strategy_name=self.name,
@@ -67,7 +75,11 @@ class MomentumStrategy(BaseStrategy):
         qty = int(self.state.current_position.get("quantity", lots))
 
         if current_side == "LONG" and latest_cross < 0:
-            self.state.current_position = {"side": "SHORT", "quantity": qty}
+            self.state.current_position = {
+                "side": "SHORT",
+                "quantity": qty,
+                "entry_regime": regime.value,
+            }
             return Signal(
                 signal_type=SignalType.ADJUST,
                 strategy_name=self.name,
@@ -83,7 +95,11 @@ class MomentumStrategy(BaseStrategy):
             )
 
         if current_side == "SHORT" and latest_cross > 0:
-            self.state.current_position = {"side": "LONG", "quantity": qty}
+            self.state.current_position = {
+                "side": "LONG",
+                "quantity": qty,
+                "entry_regime": regime.value,
+            }
             return Signal(
                 signal_type=SignalType.ADJUST,
                 strategy_name=self.name,

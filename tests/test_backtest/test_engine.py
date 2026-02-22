@@ -306,6 +306,62 @@ def test_engine_infers_buy_for_exit_without_orders_when_short():
     assert sides == ["SELL", "BUY"]
 
 
+def test_engine_calls_regime_transition_hook_only_on_actual_transition():
+    candles = pd.DataFrame(
+        {
+            "timestamp": pd.date_range("2026-01-01", periods=5, freq="D"),
+            "open": [100, 101, 102, 103, 104],
+            "high": [101, 102, 103, 104, 105],
+            "low": [99, 100, 101, 102, 103],
+            "close": [100, 101, 102, 103, 104],
+        }
+    )
+
+    class TransitionAuditStrategy(BaseStrategy):
+        def __init__(self, name: str, config: dict):
+            super().__init__(name, config)
+            self.transition_pairs: list[tuple[RegimeState, RegimeState]] = []
+
+        def generate_signal(self, market_data: dict, regime: RegimeState) -> Signal:
+            return Signal(
+                signal_type=SignalType.NO_SIGNAL,
+                strategy_name=self.name,
+                instrument=self.config.get("instrument", "NIFTY"),
+                timestamp=market_data["timestamp"],
+                regime=regime,
+            )
+
+        def get_exit_conditions(self, market_data: dict) -> Signal | None:
+            return None
+
+        def compute_position_size(self, capital: float, risk_per_trade: float) -> int:
+            return 1
+
+        def should_be_active(self, current_regime: RegimeState) -> bool:
+            return False
+
+        def on_regime_change(
+            self, old_regime: RegimeState, new_regime: RegimeState
+        ) -> Signal | None:
+            self.transition_pairs.append((old_regime, new_regime))
+            return None
+
+    strategy = TransitionAuditStrategy(
+        name="transition_audit",
+        config={"instrument": "NIFTY", "active_regimes": []},
+    )
+    engine = BacktestEngine(
+        classifier=RegimeClassifier(thresholds=RegimeThresholds()),
+        strategy=strategy,
+        simulator=FillSimulator(slippage_pct=0.0, commission_per_order=0.0),
+        initial_capital=1000.0,
+    )
+    engine.run(candles=candles)
+
+    assert strategy.transition_pairs
+    assert all(old != new for old, new in strategy.transition_pairs)
+
+
 def test_engine_analysis_start_skips_pre_window_trading_and_outputs():
     candles = pd.DataFrame(
         {

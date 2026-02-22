@@ -52,6 +52,7 @@ DEFAULT_SENSITIVITY_PARAMS = {
     "baseline_trend": ["adx_min", "vix_max"],
     "regime_probe": ["lots"],
 }
+DEFAULT_INDICATOR_WARMUP_DAYS = 60
 
 LOGGER = logging.getLogger(__name__)
 
@@ -77,10 +78,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--indicator-warmup-days",
         type=int,
-        default=0,
+        default=DEFAULT_INDICATOR_WARMUP_DAYS,
         help=(
-            "Extra days loaded before --from to warm indicators "
-            "(excluded from backtest metrics/trades)."
+            "Days loaded before --from to warm indicators (must be >= 1; "
+            "excluded from backtest metrics/trades)."
         ),
     )
     parser.add_argument(
@@ -347,7 +348,7 @@ def _run_walk_forward_backtest(
     run_name: str,
     write_report: bool,
     timeframe: str,
-    indicator_warmup_days: int = 0,
+    indicator_warmup_days: int = DEFAULT_INDICATOR_WARMUP_DAYS,
 ) -> tuple[dict[str, Any], dict[str, str]]:
     # Walk-forward summary is numeric today, but callers consume a shared metric map type.
     windows = generate_walk_forward_windows(
@@ -540,7 +541,7 @@ def _run_strategy(
     run_name: str,
     write_report: bool,
     timeframe: str,
-    indicator_warmup_days: int = 0,
+    indicator_warmup_days: int = DEFAULT_INDICATOR_WARMUP_DAYS,
 ) -> tuple[dict[str, Any], dict[str, str]]:
     if walk_forward:
         return _run_walk_forward_backtest(
@@ -611,7 +612,10 @@ def main() -> int:
     backtest_cfg = settings.get("backtest", {})
     start = args.start or parse_date(backtest_cfg.get("start_date", "2022-01-01"))
     end = args.end or parse_date(backtest_cfg.get("end_date", "2025-12-31"))
-    load_start = start - timedelta(days=max(int(args.indicator_warmup_days), 0))
+    indicator_warmup_days = int(args.indicator_warmup_days)
+    if indicator_warmup_days < 1:
+        raise ValueError("--indicator-warmup-days must be >= 1 for ADX warmup integrity.")
+    load_start = start - timedelta(days=indicator_warmup_days)
 
     vix = raw_store.read_time_series(
         "vix", symbol="INDIAVIX", timeframe="1d", start=load_start, end=end
@@ -663,7 +667,7 @@ def main() -> int:
     print("Backtest Run")
     print("=" * 72)
     print(f"symbols={symbols} timeframe={args.timeframe} start={start.date()} end={end.date()}")
-    print(f"load_start={load_start.date()} indicator_warmup_days={args.indicator_warmup_days}")
+    print(f"load_start={load_start.date()} indicator_warmup_days={indicator_warmup_days}")
     print(f"output_dir={output_dir_path}")
     print(f"strategies={strategy_ids}")
     print(f"walk_forward={args.walk_forward} sensitivity={sensitivity_enabled}")
@@ -721,7 +725,7 @@ def main() -> int:
                 run_name=run_name,
                 write_report=True,
                 timeframe=args.timeframe,
-                indicator_warmup_days=max(int(args.indicator_warmup_days), 0),
+                indicator_warmup_days=indicator_warmup_days,
             )
             runs_completed += 1
 
@@ -818,7 +822,7 @@ def main() -> int:
                     run_name=f"{run_name}_sens_{variant['variant_id']}",
                     write_report=False,
                     timeframe=args.timeframe,
-                    indicator_warmup_days=max(int(args.indicator_warmup_days), 0),
+                    indicator_warmup_days=indicator_warmup_days,
                 )
                 variant_rows.append(
                     {

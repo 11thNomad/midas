@@ -493,7 +493,9 @@ class BacktestEngine:
 
         if self.strategy.should_be_active(regime):
             return self.strategy.generate_signal(market_data=market_data, regime=regime)
-        return self.strategy.on_regime_change(previous_regime, regime)
+        if previous_regime != regime:
+            return self.strategy.on_regime_change(previous_regime, regime)
+        return None
 
     @staticmethod
     def _prep_vix(vix_df: pd.DataFrame | None) -> pd.DataFrame:

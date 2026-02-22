@@ -117,6 +117,35 @@ class BaseStrategy(ABC):
         """Check if this strategy should be active in the current regime."""
         return current_regime in self.active_regimes
 
+    def _entry_regime(self) -> RegimeState | None:
+        current_position = self.state.current_position
+        if not isinstance(current_position, dict):
+            return None
+        raw = current_position.get("entry_regime")
+        if raw is None:
+            return None
+        if isinstance(raw, RegimeState):
+            return raw
+        with suppress(ValueError):
+            return RegimeState(str(raw))
+        return None
+
+    def should_exit_on_regime_change(self, *, new_regime: RegimeState) -> bool:
+        """
+        Determine if a regime-transition exit should be emitted.
+
+        Exit only when:
+        1) There is an open position.
+        2) The new regime is outside active_regimes.
+        3) The new regime differs from the recorded entry regime (if recorded).
+        """
+        if self.state.current_position is None:
+            return False
+        if self.should_be_active(new_regime):
+            return False
+        entry_regime = self._entry_regime()
+        return not (entry_regime is not None and new_regime == entry_regime)
+
     @abstractmethod
     def generate_signal(
         self,
@@ -179,7 +208,7 @@ class BaseStrategy(ABC):
 
         Override for more nuanced behavior (e.g., tighten stops instead of exiting).
         """
-        if not self.should_be_active(new_regime) and self.state.current_position:
+        if self.should_exit_on_regime_change(new_regime=new_regime):
             return Signal(
                 signal_type=SignalType.EXIT,
                 strategy_name=self.name,

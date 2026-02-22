@@ -171,6 +171,7 @@ class IronCondorStrategy(BaseStrategy):
             "structure": "iron_condor",
             "quantity": quantity,
             "entry_time": ts,
+            "entry_regime": regime.value,
             "legs": legs,
             "entry_credit": entry_credit,
             "entry_dte": entry_dte,
@@ -262,9 +263,7 @@ class IronCondorStrategy(BaseStrategy):
         return max(max_lots * lot_size, 0)
 
     def on_regime_change(self, old_regime: RegimeState, new_regime: RegimeState) -> Signal | None:
-        if self.state.current_position is None:
-            return None
-        if self.should_be_active(new_regime):
+        if not self.should_exit_on_regime_change(new_regime=new_regime):
             return None
 
         instrument = str(self.config.get("instrument", "NIFTY"))

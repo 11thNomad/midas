@@ -21,7 +21,11 @@ class RegimeProbeStrategy(BaseStrategy):
             RegimeState.HIGH_VOL_TRENDING,
         ):
             qty = self.compute_position_size(capital=0, risk_per_trade=0)
-            self.state.current_position = {"symbol": instrument, "quantity": qty}
+            self.state.current_position = {
+                "symbol": instrument,
+                "quantity": qty,
+                "entry_regime": regime.value,
+            }
             return Signal(
                 signal_type=SignalType.ENTRY_LONG,
                 strategy_name=self.name,

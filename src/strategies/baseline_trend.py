@@ -40,7 +40,11 @@ class BaselineTrendStrategy(BaseStrategy):
 
         if self.state.current_position is None and gate:
             qty = self.compute_position_size(capital=0.0, risk_per_trade=0.0)
-            self.state.current_position = {"side": "LONG", "quantity": qty}
+            self.state.current_position = {
+                "side": "LONG",
+                "quantity": qty,
+                "entry_regime": regime.value,
+            }
             return Signal(
                 signal_type=SignalType.ENTRY_LONG,
                 strategy_name=self.name,

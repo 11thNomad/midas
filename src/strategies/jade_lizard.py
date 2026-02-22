@@ -65,6 +65,7 @@ class JadeLizardStrategy(BaseStrategy):
                 "variant": variant,
                 "quantity": lots,
                 "entry_time": ts,
+                "entry_regime": regime.value,
                 "legs": legs,
                 "entry_credit": entry_credit,
                 "entry_dte": entry_dte,
@@ -144,9 +145,7 @@ class JadeLizardStrategy(BaseStrategy):
         return int(self.config.get("max_lots", 1) or 1)
 
     def on_regime_change(self, old_regime: RegimeState, new_regime: RegimeState) -> Signal | None:
-        if self.state.current_position is None:
-            return None
-        if self.should_be_active(new_regime):
+        if not self.should_exit_on_regime_change(new_regime=new_regime):
             return None
 
         instrument = self.config.get("instrument", "NIFTY")
