@@ -7,6 +7,7 @@ from typing import Any
 
 import pandas as pd
 
+from src.data.option_symbols import option_lookup_keys, resolve_option_price
 from src.strategies.base import BaseStrategy, RegimeState, Signal, SignalType
 
 
@@ -399,17 +400,30 @@ class JadeLizardStrategy(BaseStrategy):
                 symbol = str(row.get(symbol_col, "")).strip()
                 if not symbol:
                     continue
-                prices[symbol] = float(row.get("ltp", 0.0) or 0.0)
+                price = float(row.get("ltp", 0.0) or 0.0)
+                for lookup_key in option_lookup_keys(
+                    symbol=symbol,
+                    expiry=row.get("expiry"),
+                    strike=row.get("strike"),
+                    option_type=row.get("option_type"),
+                ):
+                    prices[lookup_key] = price
         return prices
 
     @staticmethod
     def _close_debit(legs: list[dict[str, Any]], price_map: dict[str, float]) -> float | None:
         close_debit = 0.0
         for leg in legs:
-            symbol = str(leg.get("symbol", ""))
-            if symbol not in price_map:
+            symbol = str(leg.get("symbol", "")).strip()
+            leg_price = resolve_option_price(
+                price_lookup=price_map,
+                symbol=symbol,
+                expiry=leg.get("expiry"),
+                strike=leg.get("strike"),
+                option_type=leg.get("option_type"),
+            )
+            if leg_price is None:
                 return None
-            leg_price = float(price_map[symbol])
             action = str(leg.get("action", "")).upper()
             if action == "SELL":
                 close_debit += leg_price

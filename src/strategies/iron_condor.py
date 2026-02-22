@@ -7,6 +7,7 @@ from typing import Any
 
 import pandas as pd
 
+from src.data.option_symbols import option_lookup_keys, resolve_option_price
 from src.signals import volatility
 from src.signals.greeks import mibian_greeks, mibian_implied_iv
 from src.strategies.base import BaseStrategy, RegimeState, Signal, SignalType
@@ -676,8 +677,16 @@ class IronCondorStrategy(BaseStrategy):
             if raw_price is None:
                 continue
             price = IronCondorStrategy._to_float(raw_price)
-            if symbol and price is not None:
-                out[symbol] = float(price)
+            if not symbol or price is None:
+                continue
+            resolved_price = float(price)
+            for lookup_key in option_lookup_keys(
+                symbol=symbol,
+                expiry=row.get("expiry"),
+                strike=row.get("strike"),
+                option_type=row.get("option_type"),
+            ):
+                out[lookup_key] = resolved_price
         return out
 
     @staticmethod
@@ -695,9 +704,15 @@ class IronCondorStrategy(BaseStrategy):
         close_debit = 0.0
         for leg in legs:
             symbol = str(leg.get("symbol", "")).strip()
-            if symbol not in price_map:
+            px = resolve_option_price(
+                price_lookup=price_map,
+                symbol=symbol,
+                expiry=leg.get("expiry"),
+                strike=leg.get("strike"),
+                option_type=leg.get("option_type"),
+            )
+            if px is None:
                 return None
-            px = float(price_map[symbol])
             qty = float(leg.get("quantity", 1) or 1)
             action = str(leg.get("action", "")).upper()
             if action == "SELL":

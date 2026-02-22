@@ -637,3 +637,13 @@ def test_engine_forces_liquidation_at_window_end_and_reports_integrity():
     assert "early_exit_opportunity" in result.decisions.columns
     assert "earliest_exit_day" in result.decisions.columns
     assert "actual_exit_pnl" in result.decisions.columns
+
+
+def test_engine_resolves_mark_price_across_symbol_formats():
+    price = BacktestEngine._resolve_mark_price(
+        instrument="NIFTY_20240718_24700CE",
+        mark_prices={"NIFTY2471824700CE": 44.55},
+        fallback_prices={},
+        default_underlying_price=0.0,
+    )
+    assert price == 44.55

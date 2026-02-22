@@ -183,6 +183,95 @@ def test_iron_condor_exit_conditions_profit_target():
     assert exit_signal.signal_type == SignalType.EXIT
 
 
+def test_iron_condor_exit_conditions_resolve_compact_chain_symbols():
+    strategy = IronCondorStrategy(
+        name="iron_condor",
+        config={
+            "instrument": "NIFTY",
+            "max_lots": 1,
+            "lot_size": 1,
+            "entry_days": [0],
+            "min_entry_vix": 9.0,
+            "max_entry_vix": 30.0,
+            "profit_target_pct": 50,
+            "stop_loss_pct": 100,
+            "wing_width": 100,
+            "min_premium": 0.0,
+            "enable_time_exit": False,
+        },
+    )
+    ts = datetime(2024, 7, 8, 9, 15)
+    strategy.state.current_position = {
+        "structure": "iron_condor",
+        "quantity": 1,
+        "entry_time": ts,
+        "entry_regime": RegimeState.HIGH_VOL_CHOPPY.value,
+        "legs": [
+            {
+                "symbol": "NIFTY_20240718_24700CE",
+                "action": "SELL",
+                "quantity": 1,
+                "price": 56.0,
+                "expiry": pd.Timestamp("2024-07-18"),
+                "strike": 24700.0,
+                "option_type": "CE",
+            },
+            {
+                "symbol": "NIFTY_20240718_23950PE",
+                "action": "SELL",
+                "quantity": 1,
+                "price": 54.0,
+                "expiry": pd.Timestamp("2024-07-18"),
+                "strike": 23950.0,
+                "option_type": "PE",
+            },
+            {
+                "symbol": "NIFTY_20240718_24800CE",
+                "action": "BUY",
+                "quantity": 1,
+                "price": 37.0,
+                "expiry": pd.Timestamp("2024-07-18"),
+                "strike": 24800.0,
+                "option_type": "CE",
+            },
+            {
+                "symbol": "NIFTY_20240718_23850PE",
+                "action": "BUY",
+                "quantity": 1,
+                "price": 39.0,
+                "expiry": pd.Timestamp("2024-07-18"),
+                "strike": 23850.0,
+                "option_type": "PE",
+            },
+        ],
+        "entry_credit": 34.0,
+    }
+
+    compact_chain = pd.DataFrame(
+        {
+            "timestamp": [pd.Timestamp("2024-07-09 18:30:00")] * 4,
+            "symbol": [
+                "NIFTY2471824700CE",
+                "NIFTY2471823950PE",
+                "NIFTY2471824800CE",
+                "NIFTY2471823850PE",
+            ],
+            "option_type": ["CE", "PE", "CE", "PE"],
+            "strike": [24700, 23950, 24800, 23850],
+            "ltp": [10.0, 10.0, 5.0, 5.0],
+            "expiry": [pd.Timestamp("2024-07-18")] * 4,
+        }
+    )
+
+    exit_signal = strategy.get_exit_conditions(
+        {"timestamp": datetime(2024, 7, 10, 9, 15), "option_chain": compact_chain}
+    )
+
+    assert exit_signal is not None
+    assert exit_signal.signal_type == SignalType.EXIT
+    assert "Profit target hit" in exit_signal.reason
+
+
 def test_iron_condor_skips_entry_when_no_expiry_in_dte_window():
     strategy = IronCondorStrategy(
         name="iron_condor",

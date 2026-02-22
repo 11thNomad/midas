@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-import pandas as pd
-
+from src.data.option_symbols import (
+    option_canonical_key_from_contract,
+    option_lookup_keys,
+    resolve_option_price,
+)
 from src.strategies.base import Signal, SignalType
 
 
@@ -115,14 +117,16 @@ class FillSimulator:
         if "ltp" in order and order["ltp"] is not None:
             return float(order["ltp"])
         symbol = str(order.get("symbol", "")).strip()
-        if symbol and price_lookup and symbol in price_lookup:
-            return float(price_lookup[symbol])
         if price_lookup:
-            option_key = FillSimulator._canonical_option_key_from_order(order)
-            if option_key is None and symbol:
-                option_key = FillSimulator._canonical_option_key_from_symbol(symbol)
-            if option_key is not None and option_key in price_lookup:
-                return float(price_lookup[option_key])
+            resolved = resolve_option_price(
+                price_lookup=price_lookup,
+                symbol=symbol,
+                expiry=order.get("expiry"),
+                strike=order.get("strike"),
+                option_type=order.get("option_type"),
+            )
+            if resolved is not None:
+                return float(resolved)
         if symbol and FillSimulator._is_option_symbol(symbol):
             return None
         return float(default_price)
@@ -134,41 +138,17 @@ class FillSimulator:
 
     @staticmethod
     def _canonical_option_key_from_order(order: dict[str, Any]) -> str | None:
-        expiry = order.get("expiry")
-        strike = order.get("strike")
-        option_type = order.get("option_type")
-        if expiry is None or strike is None or option_type is None:
-            return None
-        return FillSimulator._canonical_option_key(
-            expiry=expiry,
-            strike=strike,
-            option_type=option_type,
+        return option_canonical_key_from_contract(
+            expiry=order.get("expiry"),
+            strike=order.get("strike"),
+            option_type=order.get("option_type"),
         )
 
     @staticmethod
     def _canonical_option_key_from_symbol(symbol: str) -> str | None:
-        sym = str(symbol).strip().upper()
-        if not sym:
-            return None
-
-        # Format: NIFTY_20240718_24700CE
-        m = re.match(r"^[A-Z]+_(\d{8})_(\d+)(CE|PE)$", sym)
-        if m:
-            return f"OPT::{m.group(1)}_{int(m.group(2))}_{m.group(3)}"
-
-        # Format: NIFTY2471824700CE -> YYMMDD + strike + option type
-        m = re.match(r"^[A-Z]+(\d{6})(\d+)(CE|PE)$", sym)
-        if m:
-            yymmdd = m.group(1)
-            yyyy = 2000 + int(yymmdd[:2])
-            mm = int(yymmdd[2:4])
-            dd = int(yymmdd[4:6])
-            try:
-                expiry = pd.Timestamp(year=yyyy, month=mm, day=dd)
-            except ValueError:
-                return None
-            return f"OPT::{expiry.strftime('%Y%m%d')}_{int(m.group(2))}_{m.group(3)}"
-
+        for key in option_lookup_keys(symbol=symbol):
+            if key.startswith("OPT::"):
+                return key
         return None
 
     @staticmethod
@@ -178,11 +158,8 @@ class FillSimulator:
         strike: Any,
         option_type: Any,
     ) -> str | None:
-        expiry_ts = pd.to_datetime(expiry, errors="coerce")
-        strike_value = pd.to_numeric(strike, errors="coerce")
-        if pd.isna(expiry_ts) or pd.isna(strike_value):
-            return None
-        opt = str(option_type).strip().upper()
-        if opt not in {"CE", "PE"}:
-            return None
-        return f"OPT::{expiry_ts.strftime('%Y%m%d')}_{int(float(strike_value))}_{opt}"
+        return option_canonical_key_from_contract(
+            expiry=expiry,
+            strike=strike,
+            option_type=option_type,
+        )

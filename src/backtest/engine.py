@@ -14,6 +14,7 @@ import pandas as pd
 from src.backtest.metrics import summarize_backtest
 from src.backtest.simulator import FillSimulator
 from src.data.option_chain_quality import OptionChainQualityThresholds
+from src.data.option_symbols import option_lookup_keys, resolve_option_price
 from src.regime.classifier import RegimeClassifier
 from src.risk.circuit_breaker import CircuitBreaker
 from src.signals.contracts import SignalSnapshotDTO, frame_from_signal_snapshots
@@ -604,20 +605,15 @@ class BacktestEngine:
             price = pd.to_numeric(raw_price, errors="coerce")
             if pd.isna(price):
                 continue
-            prices[symbol] = float(price)
-            option_key = BacktestEngine._canonical_option_key_from_row(row)
-            if option_key is not None:
-                prices[option_key] = float(price)
+            resolved_price = float(price)
+            for lookup_key in option_lookup_keys(
+                symbol=symbol,
+                expiry=row.get("expiry"),
+                strike=row.get("strike"),
+                option_type=row.get("option_type"),
+            ):
+                prices[lookup_key] = resolved_price
         return prices
-
-    @staticmethod
-    def _canonical_option_key_from_row(row: pd.Series) -> str | None:
-        expiry = pd.to_datetime(row.get("expiry"), errors="coerce")
-        strike = pd.to_numeric(row.get("strike"), errors="coerce")
-        option_type = str(row.get("option_type", "")).strip().upper()
-        if pd.isna(expiry) or pd.isna(strike) or option_type not in {"CE", "PE"}:
-            return None
-        return f"OPT::{pd.Timestamp(expiry).strftime('%Y%m%d')}_{int(float(strike))}_{option_type}"
 
     @staticmethod
     def _compose_mark_price_map(
@@ -892,7 +888,10 @@ class BacktestEngine:
         for instrument, qty in positions.items():
             if qty == 0:
                 continue
-            price = mark_prices.get(instrument)
+            price = resolve_option_price(
+                price_lookup=mark_prices,
+                symbol=instrument,
+            )
             if price is None:
                 price = fallback_prices.get(instrument, default_underlying_price)
             total += float(qty) * float(price)
@@ -906,7 +905,10 @@ class BacktestEngine:
         fallback_prices: dict[str, float],
         default_underlying_price: float,
     ) -> float:
-        price = mark_prices.get(instrument)
+        price = resolve_option_price(
+            price_lookup=mark_prices,
+            symbol=instrument,
+        )
         if price is None:
             price = fallback_prices.get(instrument, default_underlying_price)
         return float(price)
