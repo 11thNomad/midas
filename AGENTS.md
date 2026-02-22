@@ -9,12 +9,16 @@
 - Generated artifacts and cached datasets are stored under `data/` (typically `data/cache` and `data/reports`).
 
 ## Build, Test, and Development Commands
+- Environment baseline:
+  `source .venv3.13/bin/activate`
+  Always run tooling with Python 3.13 by default. If a Python 3.13-specific issue appears, stop and
+  decide explicitly before switching to 3.12/3.11.
 - Install with dev tooling:
-  `pip install -e ".[dev]"`
+  `python -m pip install -e ".[dev]"`
 - Run full tests:
-  `pytest`
+  `python -m pytest`
 - Run a focused test module:
-  `pytest tests/test_scripts/test_run_paper.py`
+  `python -m pytest tests/test_scripts/test_run_paper.py`
 - Lint and format:
   `ruff check .` and `ruff format .`
 - Type-check (strict mode):
@@ -24,10 +28,11 @@
   `python scripts/run_backtest.py --symbol NIFTY --timeframe 1d --from 2025-01-01 --to 2025-12-31`
 
 ## Coding Style & Naming Conventions
-- Target Python 3.11+ with 4-space indentation and type hints for new/changed code.
+- Target Python 3.13 with 4-space indentation and type hints for new/changed code.
 - Follow Ruff defaults configured in `pyproject.toml` (line length `100`; rule sets include `E/F/W/I/N/UP/B/SIM`).
 - Keep modules/functions in `snake_case`; classes in `PascalCase`; constants in `UPPER_SNAKE_CASE`.
 - Prefer small, composable functions and keep script CLI args explicit and documented.
+- Use `rg`/`rg --files` for text/file search in the repo.
 
 ## Testing Guidelines
 - Framework: `pytest` with `pytest-asyncio` (`asyncio_mode = auto`).
