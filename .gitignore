@@ -43,4 +43,4 @@ htmlcov/
 *.db
 *.sqlite3
 
-# *.log
+*.log
