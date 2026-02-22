@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from io import BytesIO, StringIO
+from typing import Any
 from zipfile import ZipFile
 
 import pandas as pd
@@ -17,6 +18,12 @@ NSE_FO_ROUTE_CUTOFF = date(2024, 7, 8)
 
 class NSEFOBhavcopyError(RuntimeError):
     """Raised when NSE F&O bhavcopy download or parsing fails."""
+
+
+def _series_from_frame(frame: pd.DataFrame, column: str, *, default: Any) -> pd.Series[Any]:
+    if column in frame.columns:
+        return frame[column]
+    return pd.Series(default, index=frame.index)
 
 
 @dataclass
@@ -158,15 +165,30 @@ def _normalize_legacy_fo(
     frame["expiry"] = pd.to_datetime(frame["EXPIRY_DT"], errors="coerce")
     frame["strike"] = pd.to_numeric(frame["STRIKE_PR"], errors="coerce")
     frame["option_type"] = frame["OPTION_TYP"].astype(str).str.upper()
-    frame["ltp"] = pd.to_numeric(frame.get("CLOSE"), errors="coerce").fillna(0.0)
-    frame["volume"] = pd.to_numeric(frame.get("CONTRACTS"), errors="coerce").fillna(0.0)
-    frame["oi"] = pd.to_numeric(frame.get("OPEN_INT"), errors="coerce").fillna(0.0)
-    frame["change_in_oi"] = pd.to_numeric(frame.get("CHG_IN_OI"), errors="coerce").fillna(0.0)
+    frame["ltp"] = pd.to_numeric(
+        _series_from_frame(frame, "CLOSE", default=0.0),
+        errors="coerce",
+    ).fillna(0.0)
+    frame["volume"] = pd.to_numeric(
+        _series_from_frame(frame, "CONTRACTS", default=0.0),
+        errors="coerce",
+    ).fillna(0.0)
+    frame["oi"] = pd.to_numeric(
+        _series_from_frame(frame, "OPEN_INT", default=0.0),
+        errors="coerce",
+    ).fillna(0.0)
+    frame["change_in_oi"] = pd.to_numeric(
+        _series_from_frame(frame, "CHG_IN_OI", default=0.0),
+        errors="coerce",
+    ).fillna(0.0)
 
     if trade_date is not None:
         frame["timestamp"] = pd.to_datetime(trade_date) + pd.Timedelta(hours=18, minutes=30)
     else:
-        date_series = pd.to_datetime(frame.get("TIMESTAMP"), errors="coerce")
+        date_series = pd.to_datetime(
+            _series_from_frame(frame, "TIMESTAMP", default=pd.NaT),
+            errors="coerce",
+        )
         frame["timestamp"] = date_series + pd.Timedelta(hours=18, minutes=30)
     frame["underlying"] = symbol
     frame["underlying_price"] = 0.0
@@ -198,23 +220,42 @@ def _normalize_udiff_fo(
     frame["expiry"] = pd.to_datetime(frame["XpryDt"], errors="coerce")
     frame["strike"] = pd.to_numeric(frame["StrkPric"], errors="coerce")
     frame["option_type"] = frame["OptnTp"].astype(str).str.upper()
-    frame["ltp"] = pd.to_numeric(frame.get("LastPric"), errors="coerce").fillna(0.0)
-    close_px = pd.to_numeric(frame.get("ClsPric"), errors="coerce").fillna(0.0)
+    frame["ltp"] = pd.to_numeric(
+        _series_from_frame(frame, "LastPric", default=0.0),
+        errors="coerce",
+    ).fillna(0.0)
+    close_px = pd.to_numeric(
+        _series_from_frame(frame, "ClsPric", default=0.0),
+        errors="coerce",
+    ).fillna(0.0)
     frame["ltp"] = frame["ltp"].where(frame["ltp"] > 0, close_px)
-    frame["volume"] = pd.to_numeric(frame.get("TtlTradgVol"), errors="coerce").fillna(0.0)
-    frame["oi"] = pd.to_numeric(frame.get("OpnIntrst"), errors="coerce").fillna(0.0)
-    frame["change_in_oi"] = pd.to_numeric(frame.get("ChngInOpnIntrst"), errors="coerce").fillna(
-        0.0
-    )
-    frame["underlying_price"] = pd.to_numeric(frame.get("UndrlygPric"), errors="coerce").fillna(0.0)
+    frame["volume"] = pd.to_numeric(
+        _series_from_frame(frame, "TtlTradgVol", default=0.0),
+        errors="coerce",
+    ).fillna(0.0)
+    frame["oi"] = pd.to_numeric(
+        _series_from_frame(frame, "OpnIntrst", default=0.0),
+        errors="coerce",
+    ).fillna(0.0)
+    frame["change_in_oi"] = pd.to_numeric(
+        _series_from_frame(frame, "ChngInOpnIntrst", default=0.0),
+        errors="coerce",
+    ).fillna(0.0)
+    frame["underlying_price"] = pd.to_numeric(
+        _series_from_frame(frame, "UndrlygPric", default=0.0),
+        errors="coerce",
+    ).fillna(0.0)
 
     if trade_date is not None:
         frame["timestamp"] = pd.to_datetime(trade_date) + pd.Timedelta(hours=18, minutes=30)
     else:
-        date_series = pd.to_datetime(frame.get("TradDt"), errors="coerce")
+        date_series = pd.to_datetime(
+            _series_from_frame(frame, "TradDt", default=pd.NaT),
+            errors="coerce",
+        )
         frame["timestamp"] = date_series + pd.Timedelta(hours=18, minutes=30)
     frame["underlying"] = symbol
-    frame["symbol"] = frame.get("FinInstrmNm", "").astype(str).str.strip()
+    frame["symbol"] = _series_from_frame(frame, "FinInstrmNm", default="").astype(str).str.strip()
     frame["symbol"] = frame["symbol"].where(
         frame["symbol"] != "",
         frame.apply(

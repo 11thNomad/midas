@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
@@ -18,7 +19,7 @@ class CandleStores:
     prefer_curated: bool
 
 
-def build_candle_stores(*, settings: dict, repo_root: Path) -> CandleStores:
+def build_candle_stores(*, settings: dict[str, Any], repo_root: Path) -> CandleStores:
     data_cfg = settings.get("data", {})
     raw_cache_dir = repo_root / str(data_cfg.get("cache_dir", "data/cache"))
     curated_cache_dir = repo_root / str(data_cfg.get("curated_cache_dir", "data/curated_cache"))

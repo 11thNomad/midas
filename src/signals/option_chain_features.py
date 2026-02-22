@@ -194,6 +194,14 @@ def option_feature_artifact_from_snapshots(snapshots: pd.DataFrame) -> pd.DataFr
     return out.reset_index(drop=True)
 
 
+def _series_from_frame(
+    frame: pd.DataFrame, column: str, *, default: Any
+) -> pd.Series[Any]:
+    if column in frame.columns:
+        return frame[column]
+    return pd.Series(default, index=frame.index)
+
+
 def _normalize_chain(chain_df: pd.DataFrame | None) -> pd.DataFrame:
     if chain_df is None or chain_df.empty:
         return pd.DataFrame()
@@ -206,10 +214,16 @@ def _normalize_chain(chain_df: pd.DataFrame | None) -> pd.DataFrame:
     out["option_type"] = out["option_type"].astype(str).str.upper()
     out = out[out["option_type"].isin(["CE", "PE"])]
     out["strike"] = pd.to_numeric(out["strike"], errors="coerce")
-    out["oi"] = pd.to_numeric(out.get("oi", 0.0), errors="coerce")
-    out["iv"] = pd.to_numeric(out.get("iv", 0.0), errors="coerce")
-    out["underlying_price"] = pd.to_numeric(out.get("underlying_price", 0.0), errors="coerce")
-    out["expiry"] = pd.to_datetime(out.get("expiry"), errors="coerce")
+    out["oi"] = pd.to_numeric(_series_from_frame(out, "oi", default=0.0), errors="coerce")
+    out["iv"] = pd.to_numeric(_series_from_frame(out, "iv", default=0.0), errors="coerce")
+    out["underlying_price"] = pd.to_numeric(
+        _series_from_frame(out, "underlying_price", default=0.0),
+        errors="coerce",
+    )
+    out["expiry"] = pd.to_datetime(
+        _series_from_frame(out, "expiry", default=pd.NaT),
+        errors="coerce",
+    )
     out = out.dropna(subset=["strike"]).copy()
     if out.empty:
         return out
@@ -221,12 +235,18 @@ def _normalize_chain(chain_df: pd.DataFrame | None) -> pd.DataFrame:
 
 
 def _resolve_spot(chain_df: pd.DataFrame, *, fallback: float) -> float:
-    price = pd.to_numeric(chain_df.get("underlying_price", 0.0), errors="coerce").dropna()
+    price = pd.to_numeric(
+        _series_from_frame(chain_df, "underlying_price", default=0.0),
+        errors="coerce",
+    ).dropna()
     if not price.empty and float(price.iloc[-1]) > 0.0:
         return float(price.iloc[-1])
     if fallback > 0.0:
         return float(fallback)
-    strike = pd.to_numeric(chain_df.get("strike", 0.0), errors="coerce").dropna()
+    strike = pd.to_numeric(
+        _series_from_frame(chain_df, "strike", default=0.0),
+        errors="coerce",
+    ).dropna()
     if strike.empty:
         return 0.0
     return float(strike.median())
@@ -255,7 +275,7 @@ def _pcr_oi(chain_df: pd.DataFrame | None) -> float:
 
 
 def _sorted_expiries(chain_df: pd.DataFrame, *, asof: datetime | None) -> list[pd.Timestamp]:
-    expiry = pd.to_datetime(chain_df.get("expiry"), errors="coerce")
+    expiry = pd.to_datetime(_series_from_frame(chain_df, "expiry", default=pd.NaT), errors="coerce")
     expiry = expiry.dropna().drop_duplicates().sort_values()
     if expiry.empty:
         return []
@@ -272,8 +292,14 @@ def _atm_iv_for_expiry(chain_df: pd.DataFrame | None, *, atm_strike: float) -> f
         return 0.0
 
     out = chain_df.copy()
-    out["strike"] = pd.to_numeric(out.get("strike"), errors="coerce")
-    out["iv"] = pd.to_numeric(out.get("iv"), errors="coerce")
+    out["strike"] = pd.to_numeric(
+        _series_from_frame(out, "strike", default=float("nan")),
+        errors="coerce",
+    )
+    out["iv"] = pd.to_numeric(
+        _series_from_frame(out, "iv", default=float("nan")),
+        errors="coerce",
+    )
     out = out.dropna(subset=["strike", "iv"])
     if out.empty:
         return 0.0

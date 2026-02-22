@@ -104,11 +104,22 @@ def assess_option_chain_quality(
         )
 
     out = chain_df.copy()
-    out["option_type"] = out.get("option_type", "").astype(str).str.upper()
-    out["strike"] = pd.to_numeric(out.get("strike"), errors="coerce")
-    out["ltp"] = pd.to_numeric(out.get("ltp", 0.0), errors="coerce")
-    out["oi"] = pd.to_numeric(out.get("oi", 0.0), errors="coerce")
-    out["expiry"] = pd.to_datetime(out.get("expiry"), errors="coerce")
+
+    option_type = (
+        out["option_type"]
+        if "option_type" in out.columns
+        else pd.Series("", index=out.index)
+    )
+    strike = out["strike"] if "strike" in out.columns else pd.Series(float("nan"), index=out.index)
+    ltp = out["ltp"] if "ltp" in out.columns else pd.Series(0.0, index=out.index)
+    oi = out["oi"] if "oi" in out.columns else pd.Series(0.0, index=out.index)
+    expiry = out["expiry"] if "expiry" in out.columns else pd.Series(pd.NaT, index=out.index)
+
+    out["option_type"] = option_type.astype(str).str.upper()
+    out["strike"] = pd.to_numeric(strike, errors="coerce")
+    out["ltp"] = pd.to_numeric(ltp, errors="coerce")
+    out["oi"] = pd.to_numeric(oi, errors="coerce")
+    out["expiry"] = pd.to_datetime(expiry, errors="coerce")
 
     rows = int(len(out))
     valid_types = out["option_type"].isin(["CE", "PE"])

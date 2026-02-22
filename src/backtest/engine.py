@@ -401,9 +401,9 @@ class BacktestEngine:
         chain_timestamps = pd.DatetimeIndex(sorted(chain_ranges.keys()))
 
         chain_price_maps: dict[pd.Timestamp, dict[str, float]] = {}
-        for chain_ts in chain_timestamps:
-            snap = cls._slice_chain_by_timestamp(chain, chain_ranges, chain_ts)
-            chain_price_maps[chain_ts] = cls._build_chain_price_map(snap)
+        for snapshot_ts in chain_timestamps:
+            snap = cls._slice_chain_by_timestamp(chain, chain_ranges, snapshot_ts)
+            chain_price_maps[snapshot_ts] = cls._build_chain_price_map(snap)
 
         classifier = RegimeClassifier(thresholds=thresholds)
         quality_thresholds = chain_quality_thresholds or OptionChainQualityThresholds()
@@ -580,7 +580,10 @@ class BacktestEngine:
             return {}
         out: dict[pd.Timestamp, tuple[int, int]] = {}
         for ts, idx in chain_df.groupby("timestamp", sort=True).indices.items():
-            ts_key = pd.to_datetime(ts, errors="coerce")
+            try:
+                ts_key = pd.Timestamp(str(ts))
+            except (TypeError, ValueError):
+                continue
             if pd.isna(ts_key):
                 continue
             lo = int(min(idx))
