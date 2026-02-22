@@ -1,0 +1,28 @@
+Lock current baseline
+Re-run baseline and iron-condor backtest + walk-forward on curated candles.
+Compare PnL and robustness using the new *_option_features.csv artifacts.
+Add artifact visibility
+Extend Streamlit (strategy_results_dashboard.py) to show:
+chain quality status coverage
+PCR/IV term/skew around entries
+trade outcome vs feature snapshot
+This makes debugging much faster before changing model logic.
+Implement risk-first mitigations (feature-flagged)
+Add execution-level guardrails first:
+temporary short-vol entry block after large downside day
+optional price-shock override / fast VIX shock
+Keep them toggled in config so you can A/B compare.
+Paper data accumulation phase
+Run paper loop daily to build real feature history (FII/PCR/IV-surface behavior in practice).
+Use this as the primary source for re-validating suspicious regime windows.
+FII strategy decision
+Since historical FII backfill is weak, treat FII override as “limited confidence historical, normal in forward paper/live.”
+Revisit historical FII ingest only if paper results show it materially changes entry quality.
+Promotion pipeline
+Define explicit promotion gate:
+min trades
+max drawdown
+stability across fee profiles
+feature-quality coverage (chain_quality_status=ok share)
+Then use this to decide what moves from backtest -> paper -> live.
+If you want, I can turn this into a concrete week-by-week execution checklist with commands.

@@ -13,7 +13,7 @@ import pandas as pd
 from src.backtest.metrics import summarize_backtest
 from src.backtest.simulator import FillSimulator
 from src.data.option_chain_quality import OptionChainQualityThresholds
-from src.regime.classifier import RegimeClassifier
+from src.regime.classifier import RegimeClassifier, RegimeThresholds
 from src.risk.circuit_breaker import CircuitBreaker
 from src.signals.contracts import SignalSnapshotDTO, frame_from_signal_snapshots
 from src.signals.pipeline import build_feature_context
@@ -28,6 +28,37 @@ class BacktestResult:
     metrics: dict[str, float]
     signal_snapshots: pd.DataFrame = field(default_factory=pd.DataFrame)
     decisions: pd.DataFrame = field(default_factory=pd.DataFrame)
+
+
+@dataclass(frozen=True)
+class PrecomputedBarContext:
+    timestamp: pd.Timestamp
+    regime: RegimeState
+    snapshot: SignalSnapshotDTO
+    chain_timestamp: pd.Timestamp | None
+
+
+@dataclass
+class BacktestPrecomputedData:
+    """Reusable per-symbol backtest context shared across strategies."""
+
+    vix: pd.DataFrame
+    fii: pd.DataFrame
+    usdinr: pd.DataFrame
+    chain: pd.DataFrame
+    chain_ranges: dict[pd.Timestamp, tuple[int, int]]
+    chain_timestamps: pd.DatetimeIndex
+    chain_price_maps: dict[pd.Timestamp, dict[str, float]]
+    bar_contexts: dict[pd.Timestamp, PrecomputedBarContext]
+
+    def chain_snapshot(self, chain_ts: pd.Timestamp | None) -> pd.DataFrame | None:
+        if chain_ts is None:
+            return None
+        bounds = self.chain_ranges.get(chain_ts)
+        if bounds is None:
+            return None
+        start, end = bounds
+        return self.chain.iloc[start:end].reset_index(drop=True)
 
 
 @dataclass
@@ -57,6 +88,7 @@ class BacktestEngine:
         usdinr_df: pd.DataFrame | None = None,
         option_chain_df: pd.DataFrame | None = None,
         analysis_start: datetime | None = None,
+        precomputed_data: BacktestPrecomputedData | None = None,
     ) -> BacktestResult:
         if candles.empty:
             empty = pd.DataFrame()
@@ -79,10 +111,16 @@ class BacktestEngine:
         bars = candles.copy()
         bars["timestamp"] = pd.to_datetime(bars["timestamp"], errors="coerce")
         bars = bars.dropna(subset=["timestamp"]).sort_values("timestamp").reset_index(drop=True)
-        vix = self._prep_vix(vix_df)
-        fii = self._prep_fii(fii_df)
-        usdinr = self._prep_usdinr(usdinr_df)
-        chain = self._prep_chain(option_chain_df)
+        if precomputed_data is None:
+            vix = self._prep_vix(vix_df)
+            fii = self._prep_fii(fii_df)
+            usdinr = self._prep_usdinr(usdinr_df)
+            chain = self._prep_chain(option_chain_df)
+        else:
+            vix = precomputed_data.vix
+            fii = precomputed_data.fii
+            usdinr = precomputed_data.usdinr
+            chain = precomputed_data.chain
 
         cash = float(self.initial_capital)
         positions: dict[str, int] = {}
@@ -101,55 +139,80 @@ class BacktestEngine:
         for i in range(len(bars)):
             row = bars.iloc[i]
             ts = pd.Timestamp(row["timestamp"]).to_pydatetime()
+            ts_key = pd.Timestamp(ts)
             open_price = float(row["open"])
             close_price = float(row["close"])
             candles_hist = bars.iloc[:i]
-            vix_hist = (
-                vix.loc[vix["timestamp"] < pd.Timestamp(ts)] if not vix.empty else pd.DataFrame()
+            pre_ctx = (
+                precomputed_data.bar_contexts.get(ts_key)
+                if precomputed_data is not None
+                else None
             )
-            fii_hist = fii.loc[fii["date"] < pd.Timestamp(ts)] if not fii.empty else pd.DataFrame()
-            usdinr_hist = (
-                usdinr.loc[usdinr["timestamp"] < pd.Timestamp(ts)]
-                if not usdinr.empty
-                else pd.DataFrame()
-            )
-            chain_asof = self._latest_chain_asof(chain, ts, strict=True)
-            mark_prices = self._build_mark_price_map(
-                chain_asof=chain_asof,
-                default_underlying_price=close_price,
-                underlying_symbol=str(self.strategy.config.get("instrument", "UNDERLYING")),
-            )
+            if pre_ctx is not None:
+                precomputed = precomputed_data
+                if precomputed is None:
+                    raise RuntimeError("precomputed context unexpectedly unavailable")
+                chain_asof = precomputed.chain_snapshot(pre_ctx.chain_timestamp)
+                chain_prices = (
+                    precomputed.chain_price_maps.get(pre_ctx.chain_timestamp, {})
+                    if pre_ctx.chain_timestamp is not None
+                    else {}
+                )
+                mark_prices = self._compose_mark_price_map(
+                    chain_prices=chain_prices,
+                    default_underlying_price=close_price,
+                    underlying_symbol=str(self.strategy.config.get("instrument", "UNDERLYING")),
+                )
+                signal_snapshot = pre_ctx.snapshot
+                regime = pre_ctx.regime
+                vix_value = float(signal_snapshot.vix_level)
+            else:
+                vix_hist = (
+                    vix.loc[vix["timestamp"] < ts_key] if not vix.empty else pd.DataFrame()
+                )
+                fii_hist = fii.loc[fii["date"] < ts_key] if not fii.empty else pd.DataFrame()
+                usdinr_hist = (
+                    usdinr.loc[usdinr["timestamp"] < ts_key]
+                    if not usdinr.empty
+                    else pd.DataFrame()
+                )
+                chain_asof = self._latest_chain_asof(chain, ts, strict=True)
+                mark_prices = self._build_mark_price_map(
+                    chain_asof=chain_asof,
+                    default_underlying_price=close_price,
+                    underlying_symbol=str(self.strategy.config.get("instrument", "UNDERLYING")),
+                )
 
-            vix_series = vix_hist["close"].astype("float64") if not vix_hist.empty else None
-            vix_value = (
-                float(vix_series.iloc[-1])
-                if vix_series is not None and not vix_series.empty
-                else 0.0
-            )
+                vix_series = vix_hist["close"].astype("float64") if not vix_hist.empty else None
+                vix_value = (
+                    float(vix_series.iloc[-1])
+                    if vix_series is not None and not vix_series.empty
+                    else 0.0
+                )
 
-            signal_snapshot, regime_signals = build_feature_context(
-                timestamp=ts,
-                symbol=str(self.strategy.config.get("instrument", "NIFTY")),
-                timeframe=str(self.strategy.config.get("timeframe", "1d")),
-                candles=candles_hist,
-                vix_value=vix_value,
-                vix_series=vix_series,
-                chain_df=chain_asof,
-                previous_chain_df=previous_chain_asof,
-                fii_df=fii_hist,
-                usdinr_close=(
-                    usdinr_hist["close"].astype("float64")
-                    if not usdinr_hist.empty and "close" in usdinr_hist.columns
-                    else None
-                ),
-                regime=self.classifier.current_regime.value,
-                thresholds=self.classifier.thresholds,
-                chain_quality_thresholds=self.chain_quality_thresholds,
-                source="backtest_engine",
-            )
-            regime = self.classifier.classify(regime_signals)
-            if chain_asof is not None and not chain_asof.empty:
-                previous_chain_asof = chain_asof
+                signal_snapshot, regime_signals = build_feature_context(
+                    timestamp=ts,
+                    symbol=str(self.strategy.config.get("instrument", "NIFTY")),
+                    timeframe=str(self.strategy.config.get("timeframe", "1d")),
+                    candles=candles_hist,
+                    vix_value=vix_value,
+                    vix_series=vix_series,
+                    chain_df=chain_asof,
+                    previous_chain_df=previous_chain_asof,
+                    fii_df=fii_hist,
+                    usdinr_close=(
+                        usdinr_hist["close"].astype("float64")
+                        if not usdinr_hist.empty and "close" in usdinr_hist.columns
+                        else None
+                    ),
+                    regime=self.classifier.current_regime.value,
+                    thresholds=self.classifier.thresholds,
+                    chain_quality_thresholds=self.chain_quality_thresholds,
+                    source="backtest_engine",
+                )
+                regime = self.classifier.classify(regime_signals)
+                if chain_asof is not None and not chain_asof.empty:
+                    previous_chain_asof = chain_asof
             if analysis_cutoff is not None and pd.Timestamp(ts) < analysis_cutoff:
                 previous_regime = regime
                 continue
@@ -158,8 +221,8 @@ class BacktestEngine:
                 {
                     "timestamp": ts,
                     "regime": regime.value,
-                    "vix": regime_signals.india_vix,
-                    "adx": regime_signals.adx_14,
+                    "vix": float(signal_snapshot.vix_level),
+                    "adx": float(signal_snapshot.adx_14),
                 }
             )
             signal_snapshot_rows.append(
@@ -312,6 +375,112 @@ class BacktestEngine:
             metrics=metrics,
         )
 
+    @classmethod
+    def prepare_precomputed_data(
+        cls,
+        *,
+        candles: pd.DataFrame,
+        thresholds: RegimeThresholds,
+        symbol: str,
+        timeframe: str,
+        vix_df: pd.DataFrame | None = None,
+        fii_df: pd.DataFrame | None = None,
+        usdinr_df: pd.DataFrame | None = None,
+        option_chain_df: pd.DataFrame | None = None,
+        chain_quality_thresholds: OptionChainQualityThresholds | None = None,
+    ) -> BacktestPrecomputedData:
+        bars = candles.copy()
+        bars["timestamp"] = pd.to_datetime(bars["timestamp"], errors="coerce")
+        bars = bars.dropna(subset=["timestamp"]).sort_values("timestamp").reset_index(drop=True)
+
+        vix = cls._prep_vix(vix_df)
+        fii = cls._prep_fii(fii_df)
+        usdinr = cls._prep_usdinr(usdinr_df)
+        chain = cls._prep_chain(option_chain_df)
+        chain_ranges = cls._build_chain_ranges(chain)
+        chain_timestamps = pd.DatetimeIndex(sorted(chain_ranges.keys()))
+
+        chain_price_maps: dict[pd.Timestamp, dict[str, float]] = {}
+        for chain_ts in chain_timestamps:
+            snap = cls._slice_chain_by_timestamp(chain, chain_ranges, chain_ts)
+            chain_price_maps[chain_ts] = cls._build_chain_price_map(snap)
+
+        classifier = RegimeClassifier(thresholds=thresholds)
+        quality_thresholds = chain_quality_thresholds or OptionChainQualityThresholds()
+        previous_chain_ts: pd.Timestamp | None = None
+        contexts: dict[pd.Timestamp, PrecomputedBarContext] = {}
+
+        for i in range(len(bars)):
+            row = bars.iloc[i]
+            ts = pd.Timestamp(row["timestamp"]).to_pydatetime()
+            ts_key = pd.Timestamp(ts)
+            candles_hist = bars.iloc[:i]
+
+            vix_hist = vix.loc[vix["timestamp"] < ts_key] if not vix.empty else pd.DataFrame()
+            fii_hist = fii.loc[fii["date"] < ts_key] if not fii.empty else pd.DataFrame()
+            usdinr_hist = (
+                usdinr.loc[usdinr["timestamp"] < ts_key] if not usdinr.empty else pd.DataFrame()
+            )
+
+            chain_ts: pd.Timestamp | None = cls._latest_chain_timestamp(
+                chain_timestamps=chain_timestamps,
+                ts=ts,
+                strict=True,
+            )
+            chain_asof = cls._slice_chain_by_timestamp(chain, chain_ranges, chain_ts)
+            previous_chain_asof = cls._slice_chain_by_timestamp(
+                chain,
+                chain_ranges,
+                previous_chain_ts,
+            )
+
+            vix_series = vix_hist["close"].astype("float64") if not vix_hist.empty else None
+            vix_value = (
+                float(vix_series.iloc[-1])
+                if vix_series is not None and not vix_series.empty
+                else 0.0
+            )
+            snapshot, regime_signals = build_feature_context(
+                timestamp=ts,
+                symbol=symbol,
+                timeframe=timeframe,
+                candles=candles_hist,
+                vix_value=vix_value,
+                vix_series=vix_series,
+                chain_df=chain_asof,
+                previous_chain_df=previous_chain_asof,
+                fii_df=fii_hist,
+                usdinr_close=(
+                    usdinr_hist["close"].astype("float64")
+                    if not usdinr_hist.empty and "close" in usdinr_hist.columns
+                    else None
+                ),
+                regime=classifier.current_regime.value,
+                thresholds=thresholds,
+                chain_quality_thresholds=quality_thresholds,
+                source="backtest_engine",
+            )
+            regime = classifier.classify(regime_signals)
+            contexts[ts_key] = PrecomputedBarContext(
+                timestamp=ts_key,
+                regime=regime,
+                snapshot=snapshot,
+                chain_timestamp=chain_ts,
+            )
+            if chain_ts is not None:
+                previous_chain_ts = chain_ts
+
+        return BacktestPrecomputedData(
+            vix=vix,
+            fii=fii,
+            usdinr=usdinr,
+            chain=chain,
+            chain_ranges=chain_ranges,
+            chain_timestamps=chain_timestamps,
+            chain_price_maps=chain_price_maps,
+            bar_contexts=contexts,
+        )
+
     def _next_signal(
         self,
         *,
@@ -406,6 +575,49 @@ class BacktestEngine:
         return out
 
     @staticmethod
+    def _build_chain_ranges(chain_df: pd.DataFrame) -> dict[pd.Timestamp, tuple[int, int]]:
+        if chain_df.empty:
+            return {}
+        out: dict[pd.Timestamp, tuple[int, int]] = {}
+        for ts, idx in chain_df.groupby("timestamp", sort=True).indices.items():
+            ts_key = pd.to_datetime(ts, errors="coerce")
+            if pd.isna(ts_key):
+                continue
+            lo = int(min(idx))
+            hi = int(max(idx)) + 1
+            out[pd.Timestamp(ts_key)] = (lo, hi)
+        return out
+
+    @staticmethod
+    def _latest_chain_timestamp(
+        *, chain_timestamps: pd.DatetimeIndex, ts: datetime, strict: bool = False
+    ) -> pd.Timestamp | None:
+        if chain_timestamps.empty:
+            return None
+        cutoff = pd.Timestamp(ts)
+        if strict:
+            pos = int(chain_timestamps.searchsorted(cutoff, side="left")) - 1
+        else:
+            pos = int(chain_timestamps.searchsorted(cutoff, side="right")) - 1
+        if pos < 0:
+            return None
+        return pd.Timestamp(chain_timestamps[pos])
+
+    @staticmethod
+    def _slice_chain_by_timestamp(
+        chain_df: pd.DataFrame,
+        chain_ranges: dict[pd.Timestamp, tuple[int, int]],
+        chain_ts: pd.Timestamp | None,
+    ) -> pd.DataFrame | None:
+        if chain_ts is None:
+            return None
+        bounds = chain_ranges.get(chain_ts)
+        if bounds is None:
+            return None
+        lo, hi = bounds
+        return chain_df.iloc[lo:hi].reset_index(drop=True)
+
+    @staticmethod
     def _latest_chain_asof(
         chain_df: pd.DataFrame, ts: datetime, *, strict: bool = False
     ) -> pd.DataFrame | None:
@@ -423,18 +635,9 @@ class BacktestEngine:
         return cast(pd.DataFrame, snap.reset_index(drop=True))
 
     @staticmethod
-    def _build_mark_price_map(
-        *,
-        chain_asof: pd.DataFrame | None,
-        default_underlying_price: float,
-        underlying_symbol: str,
-    ) -> dict[str, float]:
-        prices: dict[str, float] = {
-            "UNDERLYING": float(default_underlying_price),
-            str(underlying_symbol): float(default_underlying_price),
-        }
+    def _build_chain_price_map(chain_asof: pd.DataFrame | None) -> dict[str, float]:
         if chain_asof is None or chain_asof.empty:
-            return prices
+            return {}
 
         symbol_col = (
             "symbol"
@@ -444,7 +647,7 @@ class BacktestEngine:
             else None
         )
         if symbol_col is None:
-            return prices
+            return {}
 
         price_col = None
         for candidate in ("ltp", "last_price", "close", "price"):
@@ -452,8 +655,9 @@ class BacktestEngine:
                 price_col = candidate
                 break
         if price_col is None:
-            return prices
+            return {}
 
+        prices: dict[str, float] = {}
         for _, row in chain_asof.iterrows():
             symbol = str(row.get(symbol_col, "")).strip()
             if not symbol:
@@ -466,6 +670,32 @@ class BacktestEngine:
                 continue
             prices[symbol] = float(price)
         return prices
+
+    @staticmethod
+    def _compose_mark_price_map(
+        *,
+        chain_prices: dict[str, float],
+        default_underlying_price: float,
+        underlying_symbol: str,
+    ) -> dict[str, float]:
+        prices = dict(chain_prices)
+        prices["UNDERLYING"] = float(default_underlying_price)
+        prices[str(underlying_symbol)] = float(default_underlying_price)
+        return prices
+
+    @staticmethod
+    def _build_mark_price_map(
+        *,
+        chain_asof: pd.DataFrame | None,
+        default_underlying_price: float,
+        underlying_symbol: str,
+    ) -> dict[str, float]:
+        chain_prices = BacktestEngine._build_chain_price_map(chain_asof)
+        return BacktestEngine._compose_mark_price_map(
+            chain_prices=chain_prices,
+            default_underlying_price=default_underlying_price,
+            underlying_symbol=underlying_symbol,
+        )
 
     @staticmethod
     def _mark_to_market(

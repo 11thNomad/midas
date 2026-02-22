@@ -1,0 +1,40 @@
+What's Working Well
+The VIX-based classification is largely correct. Looking at the bottom panel, VIX stays mostly in the 10–15 range throughout mid-2025 to early 2026, and the classifier correctly labels most of this period as low-vol regimes (blue and green dots). That tracks — this was indeed a relatively calm period for Indian markets after the early 2025 correction.
+The early 2025 correction (Feb–March) is correctly flagged as high_vol_choppy (orange). You can see the sharp drop from ~23,000 to ~22,000 with VIX spiking to 20+ and ADX not yet showing strong trend. That's genuinely choppy — correct classification.
+The late 2025/early 2026 period shows some green (low_vol_trending) around the 25,500–26,000 range when prices are drifting higher with low VIX. That looks right.
+Issues I Can Spot
+1. ADX data is missing for the first ~2 months. The red ADX line sits at 0 until roughly mid-March 2025, then jumps abruptly to ~25. This is almost certainly a data issue — either ADX isn't being computed for the initial warmup period (ADX(14) needs ~28 bars to stabilize), or the data feed started late. During this period, the classifier is making decisions with only VIX, which means:
+
+The Feb 2025 dip is labeled high_vol_choppy purely on VIX > 18. Without ADX, it could have been high_vol_trending (the drop was directional, not choppy). You'd want to check: was ADX actually high during that selloff? If so, you're misclassifying what might have been a trend-following opportunity as a "sit out" regime.
+
+Fix: Ensure ADX computation starts from the first available bar with enough history. If your data starts Jan 2025, ADX(14) should be valid by early Feb. If it's showing 0, there's likely a bug in how the warmup is handled.
+2. HIGH_VOL_TRENDING is completely absent. The legend shows three regimes — low_vol_ranging, low_vol_trending, and high_vol_choppy — but no high_vol_trending (which should appear when VIX > 18 AND ADX > 25). Looking at the chart, there are moments where this should have triggered:
+
+The sharp rally from ~22,000 to ~23,500 in March 2025 — VIX was elevated (~20) and ADX spiked to ~25. That's a strong directional move in a volatile environment. Should be HIGH_VOL_TRENDING, not choppy.
+The August 2025 spike — VIX jumped to ~15-16 and ADX hit ~32 (the highest ADX reading on the chart). Price was moving directionally. If VIX was even slightly above 18 during that period, this should have been HIGH_VOL_TRENDING.
+
+Possible causes: Either your VIX threshold of 18 is too high (VIX rarely crosses 18 in this dataset — it mostly stays 10–15), or the ADX spike and VIX spike don't coincide on the same days. Check if there are any days where both VIX ≥ 18 and ADX ≥ 25 simultaneously — if not, the regime literally can't trigger, and you might need to lower the VIX threshold.
+3. The classifier flip-flops too much in the April–June 2025 period. Look at the price chart around 24,000–25,000 — you can see alternating blue and orange dots in quick succession. This means the regime is switching between low_vol_ranging and high_vol_choppy every few days. That's the hysteresis problem we discussed. VIX is hovering right around 14–16 (the boundary zone), and small fluctuations are causing regime flips.
+Fix: Add a minimum regime duration rule — require 2–3 consecutive days of new-regime signals before actually switching. Or use a smoothed VIX (3-day EMA) instead of raw daily VIX for the classification threshold.
+4. The transition zone (VIX 14–18) is too wide relative to this market. In this dataset, VIX spends the vast majority of time between 10–15. The 14–18 "transitional" zone captures a lot of what is functionally low-vol market behavior. Consider whether your thresholds should be:
+
+Low vol: VIX < 13 (instead of 14)
+High vol: VIX > 16 (instead of 18)
+
+This would be more calibrated to the actual VIX distribution in 2025. The original thresholds (14/18) were based on longer historical averages, but the post-2024 Indian market has been structurally lower volatility. This is exactly the kind of insight the visual review is designed to produce.
+5. The July–August 2025 region looks misclassified. Price drops from ~25,800 to ~24,400 — that's roughly a 5% correction over a few weeks. ADX spikes to 32 (strong trend). But the dots appear mostly blue (low_vol_ranging). That's a trending move, not ranging. VIX was probably just below the threshold, so the classifier saw "low vol" and didn't check whether ADX was screaming "trend." The ranging label here would have told your iron condor strategy to stay active — right into a 5% directional move that would have destroyed the position.
+This is a dangerous misclassification. Your strategy would have been selling iron condors during a sharp correction.
+Fix: ADX should have stronger weight in edge cases. If ADX > 30, classify as trending regardless of VIX level. A very high ADX is a strong enough signal to override the VIX component.
+Concrete Recommendations
+Threshold recalibration for this market:
+yamlregime:
+  vix_low: 13.0      # was 14.0 — tighter for current low-VIX environment
+  vix_high: 16.0      # was 18.0 — VIX rarely reaches 18 anymore
+  adx_trending: 23.0   # was 25.0 — slightly more sensitive
+  adx_override: 30.0   # NEW — if ADX > 30, force trending regardless of VIX
+Add hysteresis: Don't switch regimes unless the new classification persists for 2 consecutive days. This eliminates the flip-flopping in the transition zone.
+Fix the ADX warmup: The zero values in early data are corrupting classifications. Either start your analysis window 30 days after data begins, or fill the warmup period with a default ADX of 20 (neutral assumption).
+Add a "VIX percentile" signal alongside absolute VIX. If VIX at 14 is the 80th percentile of the past 6 months (meaning volatility is relatively high for the current regime), that's more meaningful than comparing against a fixed threshold derived from a different era. This makes the classifier self-adapting to structural VIX level changes.
+Overall Assessment
+The classifier is directionally correct — it gets the broad strokes right (calm periods are low-vol, spikes are high-vol). But the thresholds need calibration for the current market, the hysteresis needs implementation, and the ADX data bug needs fixing. The most dangerous issue is the July–August misclassification where a trending correction was labeled as ranging. That's the scenario that blows up an iron condor strategy.
+This is exactly what the visual review is for. Run the same chart after implementing the fixes and see if the labels improve. You want to reach a point where every regime label passes the "does this look right?" test when you scan the chart.

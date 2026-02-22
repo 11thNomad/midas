@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 
 import pandas as pd
+from pandas.testing import assert_frame_equal
 
 from src.backtest.engine import BacktestEngine
 from src.backtest.simulator import FillSimulator
@@ -504,3 +505,86 @@ def test_engine_does_not_generate_new_entries_when_circuit_breaker_halts():
     assert len(result.fills) == 0
     assert strategy.generate_calls == 0
     assert strategy.state.current_position is None
+
+
+def test_precomputed_context_matches_dynamic_run_outputs():
+    candles = pd.DataFrame(
+        {
+            "timestamp": pd.date_range("2026-01-01", periods=6, freq="D"),
+            "open": [100, 101, 102, 103, 104, 105],
+            "high": [101, 102, 103, 104, 105, 106],
+            "low": [99, 100, 101, 102, 103, 104],
+            "close": [100, 101, 102, 103, 104, 105],
+        }
+    )
+    chain = pd.DataFrame(
+        {
+            "timestamp": pd.to_datetime(
+                [
+                    "2026-01-01 00:00:00",
+                    "2026-01-01 00:00:00",
+                    "2026-01-02 00:00:00",
+                    "2026-01-02 00:00:00",
+                    "2026-01-04 00:00:00",
+                    "2026-01-04 00:00:00",
+                ]
+            ),
+            "option_type": ["CE", "PE", "CE", "PE", "CE", "PE"],
+            "strike": [22000, 22000, 22100, 21900, 22200, 21800],
+            "symbol": [
+                "NIFTY_20260108_22000CE",
+                "NIFTY_20260108_22000PE",
+                "NIFTY_20260108_22100CE",
+                "NIFTY_20260108_21900PE",
+                "NIFTY_20260108_22200CE",
+                "NIFTY_20260108_21800PE",
+            ],
+            "ltp": [110.0, 100.0, 95.0, 90.0, 80.0, 70.0],
+            "underlying_price": [22050.0, 22050.0, 22100.0, 22100.0, 22200.0, 22200.0],
+            "expiry": pd.to_datetime(["2026-01-08"] * 6),
+            "iv": [12.0, 13.0, 11.5, 12.5, 11.0, 12.0],
+        }
+    )
+    precomputed = BacktestEngine.prepare_precomputed_data(
+        candles=candles,
+        thresholds=RegimeThresholds(),
+        symbol="NIFTY",
+        timeframe="1d",
+        option_chain_df=chain,
+    )
+
+    strategy_dynamic = OneShotStrategy(
+        name="oneshot",
+        config={
+            "instrument": "NIFTY",
+            "active_regimes": [RegimeState.LOW_VOL_RANGING.value],
+            "exit_ts": datetime(2026, 1, 4),
+        },
+    )
+    dynamic = BacktestEngine(
+        classifier=RegimeClassifier(thresholds=RegimeThresholds()),
+        strategy=strategy_dynamic,
+        simulator=FillSimulator(slippage_pct=0.0, commission_per_order=0.0),
+        initial_capital=1000.0,
+    ).run(candles=candles, option_chain_df=chain)
+
+    strategy_precomputed = OneShotStrategy(
+        name="oneshot",
+        config={
+            "instrument": "NIFTY",
+            "active_regimes": [RegimeState.LOW_VOL_RANGING.value],
+            "exit_ts": datetime(2026, 1, 4),
+        },
+    )
+    cached = BacktestEngine(
+        classifier=RegimeClassifier(thresholds=RegimeThresholds()),
+        strategy=strategy_precomputed,
+        simulator=FillSimulator(slippage_pct=0.0, commission_per_order=0.0),
+        initial_capital=1000.0,
+    ).run(candles=candles, option_chain_df=chain, precomputed_data=precomputed)
+
+    assert_frame_equal(dynamic.equity_curve, cached.equity_curve, check_dtype=False)
+    assert_frame_equal(dynamic.fills, cached.fills, check_dtype=False)
+    assert_frame_equal(dynamic.regimes, cached.regimes, check_dtype=False)
+    assert_frame_equal(dynamic.signal_snapshots, cached.signal_snapshots, check_dtype=False)
+    assert dynamic.metrics == cached.metrics
