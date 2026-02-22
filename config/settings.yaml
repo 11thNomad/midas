@@ -123,6 +123,7 @@ strategies:
     time_exit_day: Wednesday
     # Exit parameters
     profit_target_pct: 50   # Close at 50% of max profit
+    tuesday_exit_threshold: 40  # On Tuesdays, allow exit once profit reaches 40%
     stop_loss_pct: 100      # Close if loss equals premium received
     dte_exit: 1             # Close if DTE drops to 1 (avoid expiry risk)
     # Position sizing

@@ -181,6 +181,110 @@ def test_iron_condor_exit_conditions_profit_target():
     )
     assert exit_signal is not None
     assert exit_signal.signal_type == SignalType.EXIT
+    assert str(exit_signal.reason).startswith("Profit target hit")
+
+
+def test_iron_condor_prioritizes_profit_target_over_calendar_exit():
+    strategy = IronCondorStrategy(
+        name="iron_condor",
+        config={
+            "instrument": "NIFTY",
+            "max_lots": 1,
+            "lot_size": 1,
+            "entry_days": [0],  # Monday
+            "min_entry_vix": 9.0,
+            "max_entry_vix": 30.0,
+            "profit_target_pct": 50,
+            "stop_loss_pct": 100,
+            "wing_width": 100,
+            "min_premium": 0.0,
+            "enable_time_exit": True,
+            "time_exit_day": "Wednesday",
+        },
+    )
+    entry_ts = datetime(2026, 1, 5, 9, 15)  # Monday
+    strategy.state.current_position = {
+        "structure": "iron_condor",
+        "quantity": 1,
+        "entry_time": entry_ts,
+        "legs": [
+            {"symbol": "CE_SHORT", "action": "SELL", "quantity": 1, "price": 100.0},
+            {"symbol": "PE_SHORT", "action": "SELL", "quantity": 1, "price": 100.0},
+            {"symbol": "CE_HEDGE", "action": "BUY", "quantity": 1, "price": 20.0},
+            {"symbol": "PE_HEDGE", "action": "BUY", "quantity": 1, "price": 20.0},
+        ],
+        "entry_credit": 160.0,
+    }
+
+    # Wednesday and profit target both true. Profit target must win.
+    exit_chain = pd.DataFrame(
+        {
+            "timestamp": [pd.Timestamp("2026-01-07 09:15:00")] * 4,
+            "symbol": ["CE_SHORT", "PE_SHORT", "CE_HEDGE", "PE_HEDGE"],
+            "option_type": ["CE", "PE", "CE", "PE"],
+            "strike": [22200, 21800, 22300, 21700],
+            "ltp": [60.0, 60.0, 20.0, 20.0],  # close_debit = 80 (50% capture)
+            "expiry": [pd.Timestamp("2026-01-15")] * 4,
+        }
+    )
+    exit_signal = strategy.get_exit_conditions(
+        {"timestamp": datetime(2026, 1, 7, 9, 15), "option_chain": exit_chain}
+    )
+    assert exit_signal is not None
+    assert exit_signal.signal_type == SignalType.EXIT
+    assert str(exit_signal.reason).startswith("Profit target hit")
+
+
+def test_iron_condor_tuesday_exit_threshold_triggers_early_profit_exit():
+    strategy = IronCondorStrategy(
+        name="iron_condor",
+        config={
+            "instrument": "NIFTY",
+            "max_lots": 1,
+            "lot_size": 1,
+            "entry_days": [0],  # Monday
+            "min_entry_vix": 9.0,
+            "max_entry_vix": 30.0,
+            "profit_target_pct": 50,
+            "tuesday_exit_threshold": 40,
+            "stop_loss_pct": 100,
+            "wing_width": 100,
+            "min_premium": 0.0,
+            "enable_time_exit": False,
+        },
+    )
+    entry_ts = datetime(2026, 1, 5, 9, 15)  # Monday
+    strategy.state.current_position = {
+        "structure": "iron_condor",
+        "quantity": 1,
+        "entry_time": entry_ts,
+        "legs": [
+            {"symbol": "CE_SHORT", "action": "SELL", "quantity": 1, "price": 100.0},
+            {"symbol": "PE_SHORT", "action": "SELL", "quantity": 1, "price": 100.0},
+            {"symbol": "CE_HEDGE", "action": "BUY", "quantity": 1, "price": 20.0},
+            {"symbol": "PE_HEDGE", "action": "BUY", "quantity": 1, "price": 20.0},
+        ],
+        "entry_credit": 160.0,
+    }
+
+    # Tuesday close_debit=96 => 40% capture.
+    # Should exit with Tuesday threshold (40%), not wait for 50%.
+    exit_chain = pd.DataFrame(
+        {
+            "timestamp": [pd.Timestamp("2026-01-06 09:15:00")] * 4,
+            "symbol": ["CE_SHORT", "PE_SHORT", "CE_HEDGE", "PE_HEDGE"],
+            "option_type": ["CE", "PE", "CE", "PE"],
+            "strike": [22200, 21800, 22300, 21700],
+            "ltp": [68.0, 68.0, 20.0, 20.0],  # close_debit = 96
+            "expiry": [pd.Timestamp("2026-01-15")] * 4,
+        }
+    )
+    exit_signal = strategy.get_exit_conditions(
+        {"timestamp": datetime(2026, 1, 6, 9, 15), "option_chain": exit_chain}
+    )
+    assert exit_signal is not None
+    assert exit_signal.signal_type == SignalType.EXIT
+    assert str(exit_signal.reason).startswith("Profit target hit")
 
 
 def test_iron_condor_exit_conditions_resolve_compact_chain_symbols():

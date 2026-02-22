@@ -220,8 +220,14 @@ class IronCondorStrategy(BaseStrategy):
 
         profit_target_pct = float(self.config.get("profit_target_pct", 50.0) or 50.0)
         stop_loss_pct = float(self.config.get("stop_loss_pct", 100.0) or 100.0)
-        target_close = entry_credit * max(0.0, 1.0 - (profit_target_pct / 100.0))
+        tuesday_exit_threshold = self._resolve_tuesday_exit_threshold()
+        applied_profit_target_pct = float(profit_target_pct)
+        if ts.weekday() == self.WEEKDAY_BY_NAME["tuesday"] and tuesday_exit_threshold is not None:
+            applied_profit_target_pct = min(applied_profit_target_pct, tuesday_exit_threshold)
+
+        target_close = entry_credit * max(0.0, 1.0 - (applied_profit_target_pct / 100.0))
         stop_close = entry_credit * (1.0 + (stop_loss_pct / 100.0))
+        current_profit_pct = ((entry_credit - close_debit) / entry_credit) * 100.0
 
         reason = None
         indicators: dict[str, Any] = {
@@ -229,12 +235,20 @@ class IronCondorStrategy(BaseStrategy):
             "entry_credit": entry_credit,
             "target_close": target_close,
             "stop_close": stop_close,
+            "profit_target_pct": profit_target_pct,
+            "applied_profit_target_pct": applied_profit_target_pct,
+            "tuesday_exit_threshold": tuesday_exit_threshold,
+            "current_profit_pct": current_profit_pct,
         }
 
-        if self._is_time_exit(ts):
+        if close_debit <= target_close:
+            reason = (
+                "Profit target hit: "
+                f"close_debit={close_debit:.2f} <= {target_close:.2f} "
+                f"(threshold={applied_profit_target_pct:.2f}%)"
+            )
+        elif self._is_time_exit(ts):
             reason = "Calendar time exit gate reached"
-        elif close_debit <= target_close:
-            reason = f"Profit target hit: close_debit={close_debit:.2f} <= {target_close:.2f}"
         elif close_debit >= stop_close:
             reason = f"Stop loss hit: close_debit={close_debit:.2f} >= {stop_close:.2f}"
         else:
@@ -626,6 +640,15 @@ class IronCondorStrategy(BaseStrategy):
                 return weekday
         raw_day = str(self.config.get("time_exit_day", "wednesday")).strip().lower()
         return int(self.WEEKDAY_BY_NAME.get(raw_day, 2))
+
+    def _resolve_tuesday_exit_threshold(self) -> float | None:
+        raw = self._to_float(self.config.get("tuesday_exit_threshold"))
+        if raw is None:
+            return None
+        threshold = float(raw)
+        if threshold <= 0.0:
+            return None
+        return threshold
 
     def _is_time_exit(self, ts: datetime) -> bool:
         if not bool(self.config.get("enable_time_exit", True)):
