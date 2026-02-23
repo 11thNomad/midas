@@ -42,6 +42,10 @@ regime:
 
   # FII flow alert (crore INR, 3-day cumulative)
   fii_selling_alert: -6000
+  # Phase 2-B FII consecutive-day thresholds (T-1/T-2/T-3 only, no T-0 use)
+  fii_bearish_daily_threshold: -1000
+  fii_bullish_daily_threshold: 1000
+  fii_consecutive_days: 3
 
   # Put-Call Ratio extremes
   pcr_oversold: 0.7
