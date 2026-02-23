@@ -208,6 +208,7 @@ class BacktestEngine:
             previous_regime = regime
 
             if signal is not None:
+                indicator_payload = signal.indicators if isinstance(signal.indicators, dict) else {}
                 decision_rows.append(
                     {
                         "timestamp": ts,
@@ -220,11 +221,16 @@ class BacktestEngine:
                         "orders_count": len(signal.orders or []),
                         "reason": signal.reason,
                         "indicators_json": json.dumps(
-                            signal.indicators, sort_keys=True, default=str
+                            indicator_payload, sort_keys=True, default=str
                         ),
                         "greeks_snapshot_json": json.dumps(
                             signal.greeks_snapshot, sort_keys=True, default=str
                         ),
+                        "fii_signal": indicator_payload.get("fii_signal"),
+                        "fii_t1": indicator_payload.get("fii_t1"),
+                        "fii_t2": indicator_payload.get("fii_t2"),
+                        "fii_t3": indicator_payload.get("fii_t3"),
+                        "fii_data_complete": indicator_payload.get("fii_data_complete"),
                     }
                 )
 
@@ -372,6 +378,11 @@ class BacktestEngine:
                         "reason": "backtest_window_end",
                         "indicators_json": json.dumps({}, sort_keys=True, default=str),
                         "greeks_snapshot_json": json.dumps({}, sort_keys=True, default=str),
+                        "fii_signal": None,
+                        "fii_t1": None,
+                        "fii_t2": None,
+                        "fii_t3": None,
+                        "fii_data_complete": None,
                     }
                 )
                 equity = self._mark_to_market(
@@ -414,6 +425,11 @@ class BacktestEngine:
                         "reason": "backtest_window_end",
                         "indicators_json": json.dumps({"fill_failed": True}, sort_keys=True),
                         "greeks_snapshot_json": json.dumps({}, sort_keys=True, default=str),
+                        "fii_signal": None,
+                        "fii_t1": None,
+                        "fii_t2": None,
+                        "fii_t3": None,
+                        "fii_data_complete": None,
                     }
                 )
 

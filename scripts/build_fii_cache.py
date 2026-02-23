@@ -25,6 +25,7 @@ NSE_REACT_URL = f"{NSE_BASE_URL}/api/fiidiiTradeReact"
 DATE_RE = re.compile(r"^\d{2}-[A-Za-z]{3}-\d{4}$")
 TD_RE = re.compile(r"<td[^>]*>(.*?)</td>", flags=re.IGNORECASE | re.DOTALL)
 TAG_RE = re.compile(r"<[^>]+>")
+NSDL_ABS_FILTER_LIMIT = 15_000.0
 
 
 @dataclass
@@ -135,7 +136,7 @@ def parse_nsdl_file(path: Path) -> pd.DataFrame:
         if net_value is None:
             continue
         # NSDL archive exports include cumulative totals in the same stream.
-        if abs(net_value) > 20_000:
+        if abs(net_value) > NSDL_ABS_FILTER_LIMIT:
             continue
         rows.append(
             {

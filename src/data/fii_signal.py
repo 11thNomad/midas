@@ -10,7 +10,7 @@ import pandas as pd
 
 from src.data.calendar import nse_calendar
 
-_ANOMALOUS_ABS_LIMIT = 20_000.0
+_ANOMALOUS_ABS_LIMIT = 15_000.0
 
 
 def _resolve_thresholds(settings: dict[str, Any]) -> tuple[float, float, int]:

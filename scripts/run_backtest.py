@@ -191,7 +191,18 @@ def build_strategy(
         return strategy, capital, baseline_cfg
     if strategy_id == "iron_condor":
         base_cfg = settings.get("strategies", {}).get("iron_condor", {})
-        ic_cfg = {**base_cfg, "instrument": symbol, "timeframe": timeframe, **config_overrides}
+        data_cfg = settings.get("data", {})
+        regime_cfg = settings.get("regime", {})
+        ic_cfg = {
+            **base_cfg,
+            "instrument": symbol,
+            "timeframe": timeframe,
+            "fii_cache_path": data_cfg.get("fii_cache_path", "data/cache/fii/fii_equity_daily.csv"),
+            "fii_bearish_daily_threshold": regime_cfg.get("fii_bearish_daily_threshold", -1000),
+            "fii_bullish_daily_threshold": regime_cfg.get("fii_bullish_daily_threshold", 1000),
+            "fii_consecutive_days": regime_cfg.get("fii_consecutive_days", 3),
+            **config_overrides,
+        }
         strategy = IronCondorStrategy(name=strategy_id, config=ic_cfg)
         capital = float(ic_cfg.get("capital_per_trade", 100000) or 100000)
         return strategy, capital, ic_cfg

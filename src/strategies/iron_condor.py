@@ -8,6 +8,7 @@ from typing import Any
 
 import pandas as pd
 
+from src.data.fii_signal import get_fii_signal
 from src.data.option_symbols import option_lookup_keys, resolve_option_price
 from src.signals import volatility
 from src.signals.greeks import mibian_greeks, mibian_implied_iv
@@ -89,6 +90,52 @@ class IronCondorStrategy(BaseStrategy):
                     "vix": vix_value,
                     "min_entry_vix": min_entry_vix,
                     "max_entry_vix": max_entry_vix,
+                },
+            )
+
+        current_date = ts.date()
+        fii_cache_path = str(
+            self.config.get("fii_cache_path", "data/cache/fii/fii_equity_daily.csv")
+        )
+        fii_settings = {
+            "regime": {
+                "fii_bearish_daily_threshold": float(
+                    self.config.get("fii_bearish_daily_threshold", -1000.0)
+                ),
+                "fii_bullish_daily_threshold": float(
+                    self.config.get("fii_bullish_daily_threshold", 1000.0)
+                ),
+                "fii_consecutive_days": int(self.config.get("fii_consecutive_days", 3)),
+            }
+        }
+        fii_result = get_fii_signal(
+            as_of_date=current_date,
+            cache_path=fii_cache_path,
+            settings=fii_settings,
+        )
+        if not bool(fii_result.get("data_complete", False)):
+            logger.warning(
+                "FII data incomplete for %s, proceeding without FII gate",
+                current_date,
+            )
+
+        if str(fii_result.get("fii_signal", "neutral")).lower() == "bearish":
+            return self._no_signal(
+                ts=ts,
+                regime=regime,
+                instrument=instrument,
+                reason=(
+                    "FII bearish gate: consecutive selling "
+                    f"t1={float(fii_result.get('fii_t1', float('nan'))):.0f} "
+                    f"t2={float(fii_result.get('fii_t2', float('nan'))):.0f} "
+                    f"t3={float(fii_result.get('fii_t3', float('nan'))):.0f} Cr"
+                ),
+                indicators={
+                    "fii_signal": fii_result.get("fii_signal"),
+                    "fii_t1": fii_result.get("fii_t1"),
+                    "fii_t2": fii_result.get("fii_t2"),
+                    "fii_t3": fii_result.get("fii_t3"),
+                    "fii_data_complete": fii_result.get("data_complete"),
                 },
             )
 
@@ -195,6 +242,11 @@ class IronCondorStrategy(BaseStrategy):
                 "target_offset": target_offset,
                 "entry_credit": entry_credit,
                 "credit_per_unit": credit_per_unit,
+                "fii_signal": fii_result.get("fii_signal"),
+                "fii_t1": fii_result.get("fii_t1"),
+                "fii_t2": fii_result.get("fii_t2"),
+                "fii_t3": fii_result.get("fii_t3"),
+                "fii_data_complete": fii_result.get("data_complete"),
                 **selection,
             },
             reason="Iron condor entry passed all gates",

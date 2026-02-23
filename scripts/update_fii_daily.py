@@ -14,6 +14,8 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from scripts.build_fii_cache import fetch_nse_latest_equity_net
 
+ABS_FILTER_LIMIT = 15_000.0
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Update daily FII cache from NSE latest endpoint.")
@@ -44,8 +46,12 @@ def main() -> int:
     latest["date"] = pd.to_datetime(latest["date"], errors="coerce")
     latest["fii_equity_net_cr"] = pd.to_numeric(latest["fii_equity_net_cr"], errors="coerce")
     latest = latest.dropna(subset=["date", "fii_equity_net_cr"])
+    latest = latest[latest["fii_equity_net_cr"].abs() <= ABS_FILTER_LIMIT]
     if latest.empty:
-        print("[FAIL] NSE latest row could not be parsed.")
+        print(
+            "[FAIL] NSE latest row could not be parsed "
+            f"or exceeded abs filter limit ({ABS_FILTER_LIMIT:.0f} Cr)."
+        )
         return 1
 
     # Be explicit: report the most recent fetched date/value in diagnostics.
@@ -59,6 +65,7 @@ def main() -> int:
             cache["date"] = pd.to_datetime(cache["date"], errors="coerce")
             cache["fii_equity_net_cr"] = pd.to_numeric(cache["fii_equity_net_cr"], errors="coerce")
             cache = cache.dropna(subset=["date", "fii_equity_net_cr"])
+            cache = cache[cache["fii_equity_net_cr"].abs() <= ABS_FILTER_LIMIT]
         else:
             cache = pd.DataFrame(columns=["date", "fii_equity_net_cr"])
     else:
