@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import Any
 
@@ -11,6 +12,9 @@ from src.data.option_symbols import option_lookup_keys, resolve_option_price
 from src.signals import volatility
 from src.signals.greeks import mibian_greeks, mibian_implied_iv
 from src.strategies.base import BaseStrategy, RegimeState, Signal, SignalType
+
+logger = logging.getLogger(__name__)
+logger.info("iron_condor.py loaded from: %s", __file__)
 
 
 class IronCondorStrategy(BaseStrategy):
@@ -228,6 +232,8 @@ class IronCondorStrategy(BaseStrategy):
         target_close = entry_credit * max(0.0, 1.0 - (applied_profit_target_pct / 100.0))
         stop_close = entry_credit * (1.0 + (stop_loss_pct / 100.0))
         current_profit_pct = ((entry_credit - close_debit) / entry_credit) * 100.0
+        current_date = ts.date()
+        current_weekday = ts.weekday()
 
         reason = None
         indicators: dict[str, Any] = {
@@ -240,6 +246,18 @@ class IronCondorStrategy(BaseStrategy):
             "tuesday_exit_threshold": tuesday_exit_threshold,
             "current_profit_pct": current_profit_pct,
         }
+        logger.debug(
+            "PT check: date=%s profit_pct=%.2f threshold=%.2f",
+            current_date,
+            current_profit_pct,
+            applied_profit_target_pct,
+        )
+        logger.debug(
+            "TUE check: weekday=%s profit_pct=%.2f threshold=%s",
+            current_weekday,
+            current_profit_pct,
+            tuesday_exit_threshold,
+        )
 
         if close_debit <= target_close:
             reason = (
