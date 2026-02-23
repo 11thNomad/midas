@@ -122,7 +122,7 @@ strategies:
     enable_time_exit: true  # Force calendar exit approximation in daily backtest
     time_exit_day: Wednesday
     # Exit parameters
-    profit_target_pct: 25   # Close at 25% of max profit
+    profit_target_pct: 50   # Close at 50% of max profit
     tuesday_exit_threshold:  # Disabled pending real Tuesday reversal evidence
     stop_loss_pct: 100      # Close if loss equals premium received
     dte_exit: 1             # Close if DTE drops to 1 (avoid expiry risk)
