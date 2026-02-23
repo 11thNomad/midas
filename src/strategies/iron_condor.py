@@ -94,9 +94,21 @@ class IronCondorStrategy(BaseStrategy):
             )
 
         current_date = ts.date()
-        fii_gate_enabled = bool(self.config.get("fii_gate_enabled", False))
+        regime_cfg = self.config.get("regime", {})
+        data_cfg = self.config.get("data", {})
+        regime_fii_gate_enabled = (
+            regime_cfg.get("fii_gate_enabled", False) if isinstance(regime_cfg, dict) else False
+        )
+        fii_gate_enabled = bool(self.config.get("fii_gate_enabled", regime_fii_gate_enabled))
         fii_cache_path = str(
-            self.config.get("fii_cache_path", "data/cache/fii/fii_equity_daily.csv")
+            self.config.get(
+                "fii_cache_path",
+                (
+                    data_cfg.get("fii_cache_path", "data/cache/fii/fii_equity_daily.csv")
+                    if isinstance(data_cfg, dict)
+                    else "data/cache/fii/fii_equity_daily.csv"
+                ),
+            )
         )
         fii_result: dict[str, Any] = {
             "fii_signal": None,
@@ -109,12 +121,29 @@ class IronCondorStrategy(BaseStrategy):
             fii_settings = {
                 "regime": {
                     "fii_bearish_daily_threshold": float(
-                        self.config.get("fii_bearish_daily_threshold", -1000.0)
+                        self.config.get(
+                            "fii_bearish_daily_threshold",
+                            regime_cfg.get("fii_bearish_daily_threshold", -1000.0)
+                            if isinstance(regime_cfg, dict)
+                            else -1000.0,
+                        )
                     ),
                     "fii_bullish_daily_threshold": float(
-                        self.config.get("fii_bullish_daily_threshold", 1000.0)
+                        self.config.get(
+                            "fii_bullish_daily_threshold",
+                            regime_cfg.get("fii_bullish_daily_threshold", 1000.0)
+                            if isinstance(regime_cfg, dict)
+                            else 1000.0,
+                        )
                     ),
-                    "fii_consecutive_days": int(self.config.get("fii_consecutive_days", 3)),
+                    "fii_consecutive_days": int(
+                        self.config.get(
+                            "fii_consecutive_days",
+                            regime_cfg.get("fii_consecutive_days", 3)
+                            if isinstance(regime_cfg, dict)
+                            else 3,
+                        )
+                    ),
                 }
             }
             fii_result = get_fii_signal(
@@ -326,10 +355,10 @@ class IronCondorStrategy(BaseStrategy):
                 f"close_debit={close_debit:.2f} <= {target_close:.2f} "
                 f"(threshold={applied_profit_target_pct:.2f}%)"
             )
-        elif self._is_time_exit(ts):
-            reason = "Calendar time exit gate reached"
         elif close_debit >= stop_close:
             reason = f"Stop loss hit: close_debit={close_debit:.2f} >= {stop_close:.2f}"
+        elif self._is_time_exit(ts):
+            reason = "Calendar time exit gate reached"
         else:
             dte_exit = int(self.config.get("dte_exit", 1) or 1)
             dte = self._min_dte(chain_df, legs=legs, now_ts=ts)
