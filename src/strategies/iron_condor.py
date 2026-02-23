@@ -94,50 +94,59 @@ class IronCondorStrategy(BaseStrategy):
             )
 
         current_date = ts.date()
+        fii_gate_enabled = bool(self.config.get("fii_gate_enabled", False))
         fii_cache_path = str(
             self.config.get("fii_cache_path", "data/cache/fii/fii_equity_daily.csv")
         )
-        fii_settings = {
-            "regime": {
-                "fii_bearish_daily_threshold": float(
-                    self.config.get("fii_bearish_daily_threshold", -1000.0)
-                ),
-                "fii_bullish_daily_threshold": float(
-                    self.config.get("fii_bullish_daily_threshold", 1000.0)
-                ),
-                "fii_consecutive_days": int(self.config.get("fii_consecutive_days", 3)),
-            }
+        fii_result: dict[str, Any] = {
+            "fii_signal": None,
+            "fii_t1": None,
+            "fii_t2": None,
+            "fii_t3": None,
+            "data_complete": None,
         }
-        fii_result = get_fii_signal(
-            as_of_date=current_date,
-            cache_path=fii_cache_path,
-            settings=fii_settings,
-        )
-        if not bool(fii_result.get("data_complete", False)):
-            logger.warning(
-                "FII data incomplete for %s, proceeding without FII gate",
-                current_date,
+        if fii_gate_enabled:
+            fii_settings = {
+                "regime": {
+                    "fii_bearish_daily_threshold": float(
+                        self.config.get("fii_bearish_daily_threshold", -1000.0)
+                    ),
+                    "fii_bullish_daily_threshold": float(
+                        self.config.get("fii_bullish_daily_threshold", 1000.0)
+                    ),
+                    "fii_consecutive_days": int(self.config.get("fii_consecutive_days", 3)),
+                }
+            }
+            fii_result = get_fii_signal(
+                as_of_date=current_date,
+                cache_path=fii_cache_path,
+                settings=fii_settings,
             )
+            if not bool(fii_result.get("data_complete", False)):
+                logger.warning(
+                    "FII data incomplete for %s, proceeding without FII gate",
+                    current_date,
+                )
 
-        if str(fii_result.get("fii_signal", "neutral")).lower() == "bearish":
-            return self._no_signal(
-                ts=ts,
-                regime=regime,
-                instrument=instrument,
-                reason=(
-                    "FII bearish gate: consecutive selling "
-                    f"t1={float(fii_result.get('fii_t1', float('nan'))):.0f} "
-                    f"t2={float(fii_result.get('fii_t2', float('nan'))):.0f} "
-                    f"t3={float(fii_result.get('fii_t3', float('nan'))):.0f} Cr"
-                ),
-                indicators={
-                    "fii_signal": fii_result.get("fii_signal"),
-                    "fii_t1": fii_result.get("fii_t1"),
-                    "fii_t2": fii_result.get("fii_t2"),
-                    "fii_t3": fii_result.get("fii_t3"),
-                    "fii_data_complete": fii_result.get("data_complete"),
-                },
-            )
+            if str(fii_result.get("fii_signal", "neutral")).lower() == "bearish":
+                return self._no_signal(
+                    ts=ts,
+                    regime=regime,
+                    instrument=instrument,
+                    reason=(
+                        "FII bearish gate: consecutive selling "
+                        f"t1={float(fii_result.get('fii_t1', float('nan'))):.0f} "
+                        f"t2={float(fii_result.get('fii_t2', float('nan'))):.0f} "
+                        f"t3={float(fii_result.get('fii_t3', float('nan'))):.0f} Cr"
+                    ),
+                    indicators={
+                        "fii_signal": fii_result.get("fii_signal"),
+                        "fii_t1": fii_result.get("fii_t1"),
+                        "fii_t2": fii_result.get("fii_t2"),
+                        "fii_t3": fii_result.get("fii_t3"),
+                        "fii_data_complete": fii_result.get("data_complete"),
+                    },
+                )
 
         min_dte = int(self.config.get("dte_min", 5) or 5)
         max_dte = int(self.config.get("dte_max", 14) or 14)

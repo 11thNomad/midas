@@ -197,6 +197,7 @@ def build_strategy(
             **base_cfg,
             "instrument": symbol,
             "timeframe": timeframe,
+            "fii_gate_enabled": regime_cfg.get("fii_gate_enabled", False),
             "fii_cache_path": data_cfg.get("fii_cache_path", "data/cache/fii/fii_equity_daily.csv"),
             "fii_bearish_daily_threshold": regime_cfg.get("fii_bearish_daily_threshold", -1000),
             "fii_bullish_daily_threshold": regime_cfg.get("fii_bullish_daily_threshold", 1000),
