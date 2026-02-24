@@ -546,6 +546,17 @@ def main() -> int:
     paper_capital = float(paper_cfg.get("paper_capital", initial_capital) or initial_capital)
     margin_buffer_pct = float(paper_cfg.get("margin_buffer_pct", 15.0) or 15.0)
     slippage_multiplier = float(paper_cfg.get("slippage_multiplier", 1.5) or 1.5)
+    if paper_capital > 0:
+        print(
+            "WARNING: paper trading is using mock margin — not connected to live account"
+        )
+        print(
+            "MOCK_MARGIN: using "
+            f"paper_capital={paper_capital:.2f} (bypassing Kite /margins)"
+        )
+        available_cash_resolver = lambda: paper_capital
+    else:
+        available_cash_resolver = lambda: _kite_available_cash(feed)
     executor = PaperExecutionEngine(
         base_dir=str(cache_dir),
         slippage_bps=slippage_pct * 100.0,
@@ -554,7 +565,7 @@ def main() -> int:
         initial_capital=initial_capital,
         paper_capital=paper_capital,
         margin_buffer_pct=margin_buffer_pct,
-        available_cash_resolver=lambda: _kite_available_cash(feed),
+        available_cash_resolver=available_cash_resolver,
         circuit_breaker=breaker,
     )
     stop_requested = False

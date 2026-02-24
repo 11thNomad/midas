@@ -8,6 +8,7 @@ data/cache/
 data/logs/
 data/reports/
 data/raw/
+data/paper_trading/
 *.parquet
 *.h5
 
