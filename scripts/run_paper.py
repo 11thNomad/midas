@@ -423,6 +423,28 @@ def _frame_from_option_chain(*, source: str, chain) -> pd.DataFrame:
     )
 
 
+def _instrument_price_map(
+    *, chain_df: pd.DataFrame, underlying_symbol: str, underlying_price: float
+) -> dict[str, float]:
+    prices: dict[str, float] = {}
+    if not chain_df.empty and {"symbol", "ltp"}.issubset(chain_df.columns):
+        priced = chain_df[["symbol", "ltp"]].dropna(subset=["symbol", "ltp"])
+        for _, row in priced.iterrows():
+            symbol = str(row["symbol"]).strip()
+            if not symbol:
+                continue
+            try:
+                ltp = float(row["ltp"])
+            except (TypeError, ValueError):
+                continue
+            if ltp <= 0.0:
+                continue
+            prices[symbol] = ltp
+    if underlying_price > 0.0:
+        prices[str(underlying_symbol).strip()] = float(underlying_price)
+    return prices
+
+
 def _load_latest_option_chain_snapshot(
     *,
     store: DataStore,
@@ -552,11 +574,15 @@ def main() -> int:
         )
         print(
             "MOCK_MARGIN: using "
-            f"paper_capital={paper_capital:.2f} (bypassing Kite /margins)"
+            f"paper_capital={paper_capital:.2f} (bypassing Kite /margins; "
+            "runtime balance persisted in SQLite)"
         )
-        available_cash_resolver = lambda: paper_capital
+        available_cash_resolver = None
     else:
-        available_cash_resolver = lambda: _kite_available_cash(feed)
+        def _resolve_kite_cash() -> float | None:
+            return _kite_available_cash(feed)
+
+        available_cash_resolver = _resolve_kite_cash
     executor = PaperExecutionEngine(
         base_dir=str(cache_dir),
         slippage_bps=slippage_pct * 100.0,
@@ -702,6 +728,11 @@ def main() -> int:
                     "adx": float(regime_signals.adx_14),
                     "symbol": args.symbol,
                     "close_price": underlying_price,
+                    "instrument_prices": _instrument_price_map(
+                        chain_df=chain_df,
+                        underlying_symbol=args.symbol,
+                        underlying_price=underlying_price,
+                    ),
                 },
             )
 

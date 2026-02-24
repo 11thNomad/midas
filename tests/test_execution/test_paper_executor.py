@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from datetime import datetime
 
 import pandas as pd
@@ -282,6 +283,9 @@ def test_paper_executor_writes_daily_fill_and_summary_csv(tmp_path):
             "gross_pnl",
             "fees",
             "net_pnl",
+            "realized_balance",
+            "mtm_balance",
+            "unrealized_pnl",
             "cash_balance",
             "margin_utilisation_pct",
         ]
@@ -397,3 +401,307 @@ def test_paper_executor_fill_logging_handles_same_timestamp_signals(tmp_path):
     fills = pd.read_csv(log_dir / "fills_20260102.csv")
     assert len(fills) == 6
     assert set(fills["signal_type"].str.lower()) == {"entry_short", "exit"}
+
+
+def test_paper_executor_recovers_positions_and_sequence_from_sqlite(tmp_path):
+    log_dir = tmp_path / "paper"
+    cache_dir = tmp_path / "cache"
+    engine = PaperExecutionEngine(
+        base_dir=str(cache_dir),
+        paper_log_dir=str(log_dir),
+        slippage_bps=0.0,
+        commission_per_order=0.0,
+    )
+    entry_signal = Signal(
+        signal_type=SignalType.ENTRY_SHORT,
+        strategy_name="dummy",
+        instrument="NIFTY",
+        timestamp=datetime(2026, 1, 2, 9, 15),
+        orders=[{"symbol": "NIFTY", "action": "SELL", "quantity": 2, "price": 100.0}],
+        regime=RegimeState.LOW_VOL_RANGING,
+        indicators={"call_wing": 100.0},
+    )
+    entry_fills = engine.execute_signals(
+        [entry_signal],
+        market_data={
+            "symbol": "NIFTY",
+            "timestamp": datetime(2026, 1, 2, 9, 15),
+            "last_price": 100.0,
+        },
+    )
+    assert entry_fills[0]["fill_id"] == "PAPER-00000001"
+
+    restarted = PaperExecutionEngine(
+        base_dir=str(cache_dir),
+        paper_log_dir=str(log_dir),
+        slippage_bps=0.0,
+        commission_per_order=0.0,
+    )
+    exit_signal = Signal(
+        signal_type=SignalType.EXIT,
+        strategy_name="dummy",
+        instrument="NIFTY",
+        timestamp=datetime(2026, 1, 2, 9, 30),
+        regime=RegimeState.LOW_VOL_RANGING,
+    )
+    exit_fills = restarted.execute_signals(
+        [exit_signal],
+        market_data={
+            "symbol": "NIFTY",
+            "timestamp": datetime(2026, 1, 2, 9, 30),
+            "last_price": 95.0,
+        },
+    )
+    assert exit_fills[0]["fill_id"] == "PAPER-00000002"
+    assert exit_fills[0]["side"] == "BUY"
+    assert exit_fills[0]["quantity"] == 2
+
+
+def test_paper_executor_rebuilds_from_fill_ledger_when_snapshot_missing(tmp_path):
+    log_dir = tmp_path / "paper"
+    cache_dir = tmp_path / "cache"
+    engine = PaperExecutionEngine(
+        base_dir=str(cache_dir),
+        paper_log_dir=str(log_dir),
+        slippage_bps=0.0,
+        commission_per_order=0.0,
+    )
+    entry_signal = Signal(
+        signal_type=SignalType.ENTRY_SHORT,
+        strategy_name="dummy",
+        instrument="NIFTY",
+        timestamp=datetime(2026, 1, 2, 9, 15),
+        orders=[{"symbol": "NIFTY", "action": "SELL", "quantity": 2, "price": 100.0}],
+        regime=RegimeState.LOW_VOL_RANGING,
+        indicators={"call_wing": 100.0},
+    )
+    engine.execute_signals(
+        [entry_signal],
+        market_data={
+            "symbol": "NIFTY",
+            "timestamp": datetime(2026, 1, 2, 9, 15),
+            "last_price": 100.0,
+        },
+    )
+
+    db_path = log_dir / "paper_state.sqlite3"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("DELETE FROM paper_state_snapshot WHERE id = 1")
+
+    restarted = PaperExecutionEngine(
+        base_dir=str(cache_dir),
+        paper_log_dir=str(log_dir),
+        slippage_bps=0.0,
+        commission_per_order=0.0,
+    )
+    exit_signal = Signal(
+        signal_type=SignalType.EXIT,
+        strategy_name="dummy",
+        instrument="NIFTY",
+        timestamp=datetime(2026, 1, 2, 9, 30),
+        regime=RegimeState.LOW_VOL_RANGING,
+    )
+    exit_fills = restarted.execute_signals(
+        [exit_signal],
+        market_data={
+            "symbol": "NIFTY",
+            "timestamp": datetime(2026, 1, 2, 9, 30),
+            "last_price": 95.0,
+        },
+    )
+    assert exit_fills[0]["fill_id"] == "PAPER-00000002"
+    assert exit_fills[0]["side"] == "BUY"
+    assert exit_fills[0]["quantity"] == 2
+
+
+def test_paper_executor_rebuilds_multi_day_daily_counters_correctly(tmp_path):
+    log_dir = tmp_path / "paper"
+    cache_dir = tmp_path / "cache"
+    engine = PaperExecutionEngine(
+        base_dir=str(cache_dir),
+        paper_log_dir=str(log_dir),
+        slippage_bps=0.0,
+        commission_per_order=1.0,
+        paper_capital=1_000.0,
+    )
+
+    day1_entry = Signal(
+        signal_type=SignalType.ENTRY_LONG,
+        strategy_name="dummy",
+        instrument="NIFTY",
+        timestamp=datetime(2026, 1, 2, 9, 15),
+        orders=[{"symbol": "NIFTY", "action": "BUY", "quantity": 1, "price": 100.0}],
+        regime=RegimeState.LOW_VOL_RANGING,
+    )
+    day1_exit = Signal(
+        signal_type=SignalType.EXIT,
+        strategy_name="dummy",
+        instrument="NIFTY",
+        timestamp=datetime(2026, 1, 2, 15, 20),
+        orders=[{"symbol": "NIFTY", "action": "SELL", "quantity": 1, "price": 110.0}],
+        regime=RegimeState.LOW_VOL_RANGING,
+    )
+    day2_entry = Signal(
+        signal_type=SignalType.ENTRY_LONG,
+        strategy_name="dummy",
+        instrument="NIFTY",
+        timestamp=datetime(2026, 1, 3, 9, 15),
+        orders=[{"symbol": "NIFTY", "action": "BUY", "quantity": 1, "price": 120.0}],
+        regime=RegimeState.LOW_VOL_RANGING,
+    )
+    day2_exit = Signal(
+        signal_type=SignalType.EXIT,
+        strategy_name="dummy",
+        instrument="NIFTY",
+        timestamp=datetime(2026, 1, 3, 15, 20),
+        orders=[{"symbol": "NIFTY", "action": "SELL", "quantity": 1, "price": 130.0}],
+        regime=RegimeState.LOW_VOL_RANGING,
+    )
+
+    engine.execute_signals(
+        [day1_entry],
+        market_data={
+            "symbol": "NIFTY",
+            "timestamp": datetime(2026, 1, 2, 9, 15),
+            "last_price": 100.0,
+        },
+    )
+    engine.execute_signals(
+        [day1_exit],
+        market_data={
+            "symbol": "NIFTY",
+            "timestamp": datetime(2026, 1, 2, 15, 20),
+            "last_price": 110.0,
+        },
+    )
+    engine.execute_signals(
+        [day2_entry],
+        market_data={
+            "symbol": "NIFTY",
+            "timestamp": datetime(2026, 1, 3, 9, 15),
+            "last_price": 120.0,
+        },
+    )
+    engine.execute_signals(
+        [day2_exit],
+        market_data={
+            "symbol": "NIFTY",
+            "timestamp": datetime(2026, 1, 3, 15, 20),
+            "last_price": 130.0,
+        },
+    )
+
+    db_path = log_dir / "paper_state.sqlite3"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("DELETE FROM paper_state_snapshot WHERE id = 1")
+
+    restarted = PaperExecutionEngine(
+        base_dir=str(cache_dir),
+        paper_log_dir=str(log_dir),
+        slippage_bps=0.0,
+        commission_per_order=1.0,
+        paper_capital=1_000.0,
+    )
+
+    assert restarted._summary_day_key == "20260103"
+    assert restarted._entries_today == 1
+    assert restarted._exits_today == 1
+    assert restarted._gross_realized_pnl_today == pytest.approx(10.0, rel=1e-9)
+    assert restarted._fees_paid_today == pytest.approx(2.0, rel=1e-9)
+    assert restarted._realized_pnl_today == pytest.approx(8.0, rel=1e-9)
+    available_cash, source = restarted._resolve_available_cash()
+    assert source == "paper_balance"
+    assert available_cash == pytest.approx(1_016.0, rel=1e-9)
+
+
+def test_paper_executor_tracks_mtm_balance_and_persists_across_restart(tmp_path):
+    log_dir = tmp_path / "paper"
+    cache_dir = tmp_path / "cache"
+    engine = PaperExecutionEngine(
+        base_dir=str(cache_dir),
+        paper_log_dir=str(log_dir),
+        slippage_bps=0.0,
+        commission_per_order=0.0,
+        initial_capital=1_000.0,
+        paper_capital=1_000.0,
+    )
+    entry = Signal(
+        signal_type=SignalType.ENTRY_LONG,
+        strategy_name="dummy",
+        instrument="NIFTY",
+        timestamp=datetime(2026, 1, 2, 9, 15),
+        orders=[{"symbol": "NIFTY", "action": "BUY", "quantity": 1, "price": 100.0}],
+        regime=RegimeState.LOW_VOL_RANGING,
+    )
+    engine.execute_signals(
+        [entry],
+        market_data={
+            "symbol": "NIFTY",
+            "timestamp": datetime(2026, 1, 2, 9, 15),
+            "last_price": 100.0,
+        },
+    )
+
+    engine.execute_signals(
+        [],
+        market_data={
+            "symbol": "NIFTY",
+            "timestamp": datetime(2026, 1, 2, 10, 0),
+            "last_price": 130.0,
+            "instrument_prices": {"NIFTY": 130.0},
+        },
+    )
+    assert engine._current_balance == pytest.approx(1_000.0, rel=1e-9)
+    assert engine._unrealized_pnl_current == pytest.approx(30.0, rel=1e-9)
+    assert engine._mtm_balance == pytest.approx(1_030.0, rel=1e-9)
+
+    restarted = PaperExecutionEngine(
+        base_dir=str(cache_dir),
+        paper_log_dir=str(log_dir),
+        slippage_bps=0.0,
+        commission_per_order=0.0,
+        initial_capital=1_000.0,
+        paper_capital=1_000.0,
+    )
+    assert restarted._current_balance == pytest.approx(1_000.0, rel=1e-9)
+    assert restarted._unrealized_pnl_current == pytest.approx(30.0, rel=1e-9)
+    assert restarted._mtm_balance == pytest.approx(1_030.0, rel=1e-9)
+
+
+def test_paper_executor_uses_single_starting_base_for_all_balances(tmp_path):
+    log_dir = tmp_path / "paper"
+    cache_dir = tmp_path / "cache"
+    engine = PaperExecutionEngine(
+        base_dir=str(cache_dir),
+        paper_log_dir=str(log_dir),
+        slippage_bps=0.0,
+        commission_per_order=0.0,
+        initial_capital=150_000.0,
+        paper_capital=1_000.0,
+    )
+
+    assert engine.paper_capital == pytest.approx(1_000.0, rel=1e-9)
+    assert engine._cash == pytest.approx(1_000.0, rel=1e-9)
+    assert engine._current_balance == pytest.approx(1_000.0, rel=1e-9)
+    assert engine._mtm_balance == pytest.approx(1_000.0, rel=1e-9)
+
+    engine.execute_signals(
+        [],
+        market_data={
+            "symbol": "NIFTY",
+            "timestamp": datetime(2026, 1, 2, 9, 15),
+            "last_price": 100.0,
+        },
+    )
+
+    restarted = PaperExecutionEngine(
+        base_dir=str(cache_dir),
+        paper_log_dir=str(log_dir),
+        slippage_bps=0.0,
+        commission_per_order=0.0,
+        initial_capital=150_000.0,
+        paper_capital=1_000.0,
+    )
+    assert restarted._cash == pytest.approx(1_000.0, rel=1e-9)
+    assert restarted._current_balance == pytest.approx(1_000.0, rel=1e-9)
+    assert restarted._mtm_balance == pytest.approx(1_000.0, rel=1e-9)

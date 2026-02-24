@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -32,10 +34,14 @@ class PaperExecutionEngine:
     margin_buffer_pct: float = 15.0
     available_cash_resolver: Callable[[], float | None] | None = None
     paper_log_dir: str = "data/paper_trading"
+    state_db_name: str = "paper_state.sqlite3"
     circuit_breaker: CircuitBreaker | None = None
     _store: DataStore = field(init=False, repr=False)
     _fill_seq: int = field(default=0, init=False, repr=False)
     _cash: float = field(default=0.0, init=False, repr=False)
+    _current_balance: float = field(default=0.0, init=False, repr=False)
+    _mtm_balance: float = field(default=0.0, init=False, repr=False)
+    _unrealized_pnl_current: float = field(default=0.0, init=False, repr=False)
     _positions: dict[str, int] = field(default_factory=dict, init=False, repr=False)
     _avg_cost_by_instrument: dict[str, float] = field(default_factory=dict, init=False, repr=False)
     _last_price_by_instrument: dict[str, float] = field(
@@ -47,6 +53,7 @@ class PaperExecutionEngine:
     _entries_today: int = field(default=0, init=False, repr=False)
     _exits_today: int = field(default=0, init=False, repr=False)
     _paper_log_path: Path = field(init=False, repr=False)
+    _state_db_path: Path = field(init=False, repr=False)
     _summary_day_key: str | None = field(default=None, init=False, repr=False)
 
     _FILL_COLUMNS: tuple[str, ...] = (
@@ -75,17 +82,32 @@ class PaperExecutionEngine:
         "gross_pnl",
         "fees",
         "net_pnl",
+        "realized_balance",
+        "mtm_balance",
+        "unrealized_pnl",
         "cash_balance",
         "margin_utilisation_pct",
     )
 
+    def _starting_capital(self) -> float:
+        configured = self.paper_capital
+        if configured is None:
+            configured = self.initial_capital
+        return float(configured)
+
     def __post_init__(self) -> None:
         self._store = DataStore(base_dir=self.base_dir)
-        self._cash = float(self.initial_capital)
-        if self.paper_capital is None:
-            self.paper_capital = float(self.initial_capital)
+        starting_capital = self._starting_capital()
+        self.paper_capital = float(starting_capital)
+        self._cash = float(starting_capital)
+        self._current_balance = float(starting_capital)
+        self._mtm_balance = float(starting_capital)
+        self._unrealized_pnl_current = 0.0
         self._paper_log_path = Path(self.paper_log_dir)
         self._paper_log_path.mkdir(parents=True, exist_ok=True)
+        self._state_db_path = self._paper_log_path / self.state_db_name
+        self._init_state_db()
+        self._load_state_from_db()
 
     def execute_signals(
         self, signals: list[Signal], *, market_data: dict[str, Any] | None = None
@@ -112,6 +134,8 @@ class PaperExecutionEngine:
                     self._entries_today += 1
                 elif signal.signal_type == SignalType.EXIT:
                     self._exits_today += 1
+                # Persist state after each actionable signal to minimize restart-loss window.
+                self._persist_state_to_db(fills=signal_fills)
             fills.extend(signal_fills)
 
         if fills:
@@ -124,22 +148,398 @@ class PaperExecutionEngine:
                 source="paper_executor",
             )
 
+        self._refresh_mark_to_market(market_data=market_data)
+        # Persist snapshot each loop so MTM state and day-rollover counters survive restarts.
+        self._persist_state_to_db(fills=[])
+
         if self.circuit_breaker is not None:
-            default_price = float(
-                market_data.get("last_price", market_data.get("close_price", 0.0)) or 0.0
-            )
-            equity = self._mark_to_market(default_price=default_price)
-            unrealized_pnl = self._compute_unrealized_pnl(default_price=default_price)
             open_positions = sum(1 for _, qty in self._positions.items() if qty != 0)
             self.circuit_breaker.update(
-                current_equity=equity,
+                current_equity=self._mtm_balance,
                 realized_pnl_today=self._realized_pnl_today,
-                unrealized_pnl=unrealized_pnl,
+                unrealized_pnl=self._unrealized_pnl_current,
                 open_positions=open_positions,
             )
 
         self._write_csv_logs(fills=fills, signals=executed_signals, market_data=market_data)
         return fills
+
+    def _connect_state_db(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(str(self._state_db_path))
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        return conn
+
+    def _init_state_db(self) -> None:
+        with self._connect_state_db() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS paper_fill_ledger (
+                    fill_id TEXT PRIMARY KEY,
+                    timestamp TEXT NOT NULL,
+                    trade_id TEXT NOT NULL,
+                    signal_type TEXT NOT NULL,
+                    instrument TEXT NOT NULL,
+                    side TEXT NOT NULL,
+                    quantity INTEGER NOT NULL,
+                    price REAL NOT NULL,
+                    notional REAL NOT NULL,
+                    fees REAL NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS paper_state_snapshot (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    fill_seq INTEGER NOT NULL,
+                    cash REAL NOT NULL,
+                    current_balance REAL NOT NULL DEFAULT 0.0,
+                    mtm_balance REAL NOT NULL DEFAULT 0.0,
+                    unrealized_pnl REAL NOT NULL DEFAULT 0.0,
+                    positions_json TEXT NOT NULL,
+                    avg_cost_json TEXT NOT NULL,
+                    last_price_json TEXT NOT NULL,
+                    realized_pnl_today REAL NOT NULL,
+                    gross_realized_pnl_today REAL NOT NULL,
+                    fees_paid_today REAL NOT NULL,
+                    entries_today INTEGER NOT NULL,
+                    exits_today INTEGER NOT NULL,
+                    summary_day_key TEXT,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            cols = {
+                str(row["name"])
+                for row in conn.execute("PRAGMA table_info(paper_state_snapshot)").fetchall()
+            }
+            if "current_balance" not in cols:
+                conn.execute(
+                    """
+                    ALTER TABLE paper_state_snapshot
+                    ADD COLUMN current_balance REAL NOT NULL DEFAULT 0.0
+                    """
+                )
+            if "mtm_balance" not in cols:
+                conn.execute(
+                    """
+                    ALTER TABLE paper_state_snapshot
+                    ADD COLUMN mtm_balance REAL NOT NULL DEFAULT 0.0
+                    """
+                )
+            if "unrealized_pnl" not in cols:
+                conn.execute(
+                    """
+                    ALTER TABLE paper_state_snapshot
+                    ADD COLUMN unrealized_pnl REAL NOT NULL DEFAULT 0.0
+                    """
+                )
+
+    def _load_state_from_db(self) -> None:
+        with self._connect_state_db() as conn:
+            snapshot = conn.execute(
+                """
+                SELECT
+                    fill_seq,
+                    cash,
+                    current_balance,
+                    mtm_balance,
+                    unrealized_pnl,
+                    positions_json,
+                    avg_cost_json,
+                    last_price_json,
+                    realized_pnl_today,
+                    gross_realized_pnl_today,
+                    fees_paid_today,
+                    entries_today,
+                    exits_today,
+                    summary_day_key
+                FROM paper_state_snapshot
+                WHERE id = 1
+                """
+            ).fetchone()
+            if snapshot is not None:
+                self._fill_seq = max(
+                    int(snapshot["fill_seq"]),
+                    self._max_fill_seq_from_ledger(conn),
+                )
+                self._cash = float(snapshot["cash"])
+                restored_balance = float(snapshot["current_balance"])
+                if restored_balance > 0.0:
+                    self._current_balance = restored_balance
+                restored_mtm = float(snapshot["mtm_balance"])
+                self._mtm_balance = (
+                    restored_mtm if restored_mtm > 0.0 else float(self._current_balance)
+                )
+                self._unrealized_pnl_current = float(snapshot["unrealized_pnl"])
+                self._positions = self._decode_int_map(snapshot["positions_json"])
+                self._avg_cost_by_instrument = self._decode_float_map(snapshot["avg_cost_json"])
+                self._last_price_by_instrument = self._decode_float_map(snapshot["last_price_json"])
+                self._realized_pnl_today = float(snapshot["realized_pnl_today"])
+                self._gross_realized_pnl_today = float(snapshot["gross_realized_pnl_today"])
+                self._fees_paid_today = float(snapshot["fees_paid_today"])
+                self._entries_today = int(snapshot["entries_today"])
+                self._exits_today = int(snapshot["exits_today"])
+                self._summary_day_key = str(snapshot["summary_day_key"] or "") or None
+                return
+
+            if self._max_fill_seq_from_ledger(conn) > 0:
+                self._rebuild_state_from_ledger(conn)
+
+    def _persist_state_to_db(self, *, fills: list[dict[str, Any]]) -> None:
+        fill_rows = [
+            (
+                str(fill.get("fill_id", "")).strip(),
+                pd.Timestamp(fill.get("timestamp")).isoformat(),
+                str(fill.get("trade_id", "")).strip(),
+                str(fill.get("signal_type", "")).strip(),
+                str(fill.get("instrument", "")).strip(),
+                str(fill.get("side", "")).strip().upper(),
+                int(fill.get("quantity", 0) or 0),
+                float(fill.get("price", 0.0) or 0.0),
+                float(fill.get("notional", 0.0) or 0.0),
+                float(fill.get("fees", 0.0) or 0.0),
+            )
+            for fill in fills
+            if str(fill.get("fill_id", "")).strip()
+        ]
+        with self._connect_state_db() as conn:
+            if fill_rows:
+                conn.executemany(
+                    """
+                    INSERT INTO paper_fill_ledger (
+                        fill_id,
+                        timestamp,
+                        trade_id,
+                        signal_type,
+                        instrument,
+                        side,
+                        quantity,
+                        price,
+                        notional,
+                        fees
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(fill_id) DO NOTHING
+                    """,
+                    fill_rows,
+                )
+            conn.execute(
+                """
+                INSERT INTO paper_state_snapshot (
+                    id,
+                    fill_seq,
+                    cash,
+                    current_balance,
+                    mtm_balance,
+                    unrealized_pnl,
+                    positions_json,
+                    avg_cost_json,
+                    last_price_json,
+                    realized_pnl_today,
+                    gross_realized_pnl_today,
+                    fees_paid_today,
+                    entries_today,
+                    exits_today,
+                    summary_day_key,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    fill_seq = excluded.fill_seq,
+                    cash = excluded.cash,
+                    current_balance = excluded.current_balance,
+                    mtm_balance = excluded.mtm_balance,
+                    unrealized_pnl = excluded.unrealized_pnl,
+                    positions_json = excluded.positions_json,
+                    avg_cost_json = excluded.avg_cost_json,
+                    last_price_json = excluded.last_price_json,
+                    realized_pnl_today = excluded.realized_pnl_today,
+                    gross_realized_pnl_today = excluded.gross_realized_pnl_today,
+                    fees_paid_today = excluded.fees_paid_today,
+                    entries_today = excluded.entries_today,
+                    exits_today = excluded.exits_today,
+                    summary_day_key = excluded.summary_day_key,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    1,
+                    int(self._fill_seq),
+                    float(self._cash),
+                    float(self._current_balance),
+                    float(self._mtm_balance),
+                    float(self._unrealized_pnl_current),
+                    json.dumps(self._positions, sort_keys=True),
+                    json.dumps(self._avg_cost_by_instrument, sort_keys=True),
+                    json.dumps(self._last_price_by_instrument, sort_keys=True),
+                    float(self._realized_pnl_today),
+                    float(self._gross_realized_pnl_today),
+                    float(self._fees_paid_today),
+                    int(self._entries_today),
+                    int(self._exits_today),
+                    self._summary_day_key,
+                    datetime.now().isoformat(timespec="seconds"),
+                ),
+            )
+
+    @staticmethod
+    def _decode_int_map(raw: object) -> dict[str, int]:
+        if raw is None:
+            return {}
+        try:
+            payload = json.loads(str(raw))
+        except (TypeError, ValueError):
+            return {}
+        if not isinstance(payload, dict):
+            return {}
+        out: dict[str, int] = {}
+        for key, value in payload.items():
+            try:
+                out[str(key)] = int(value)
+            except (TypeError, ValueError):
+                continue
+        return out
+
+    @staticmethod
+    def _decode_float_map(raw: object) -> dict[str, float]:
+        if raw is None:
+            return {}
+        try:
+            payload = json.loads(str(raw))
+        except (TypeError, ValueError):
+            return {}
+        if not isinstance(payload, dict):
+            return {}
+        out: dict[str, float] = {}
+        for key, value in payload.items():
+            try:
+                out[str(key)] = float(value)
+            except (TypeError, ValueError):
+                continue
+        return out
+
+    @staticmethod
+    def _parse_fill_sequence(fill_id: str) -> int | None:
+        raw = fill_id.strip()
+        if not raw.startswith("PAPER-"):
+            return None
+        suffix = raw.split("PAPER-", maxsplit=1)[1]
+        if not suffix.isdigit():
+            return None
+        return int(suffix)
+
+    def _max_fill_seq_from_ledger(self, conn: sqlite3.Connection) -> int:
+        row = conn.execute(
+            "SELECT fill_id FROM paper_fill_ledger ORDER BY fill_id DESC LIMIT 1"
+        ).fetchone()
+        if row is None:
+            return 0
+        fill_id = str(row["fill_id"])
+        parsed = self._parse_fill_sequence(fill_id)
+        return int(parsed or 0)
+
+    def _rebuild_state_from_ledger(self, conn: sqlite3.Connection) -> None:
+        starting_capital = self._starting_capital()
+        self._cash = float(starting_capital)
+        self._current_balance = float(starting_capital)
+        self._mtm_balance = float(starting_capital)
+        self._unrealized_pnl_current = 0.0
+        self._positions = {}
+        self._avg_cost_by_instrument = {}
+        self._last_price_by_instrument = {}
+        self._realized_pnl_today = 0.0
+        self._gross_realized_pnl_today = 0.0
+        self._fees_paid_today = 0.0
+        self._entries_today = 0
+        self._exits_today = 0
+        self._summary_day_key = None
+
+        rows = conn.execute(
+            """
+            SELECT
+                fill_id,
+                timestamp,
+                trade_id,
+                signal_type,
+                instrument,
+                side,
+                quantity,
+                price,
+                fees
+            FROM paper_fill_ledger
+            ORDER BY timestamp ASC, fill_id ASC
+            """
+        ).fetchall()
+
+        seen_entry_keys: set[tuple[str, str]] = set()
+        seen_exit_keys: set[tuple[str, str]] = set()
+        active_day_key: str | None = None
+
+        for row in rows:
+            signal_type = str(row["signal_type"]).lower()
+            trade_id = str(row["trade_id"]).strip()
+            ts = pd.Timestamp(row["timestamp"])
+            day_key = ts.strftime("%Y%m%d")
+            if active_day_key != day_key:
+                active_day_key = day_key
+                seen_entry_keys.clear()
+                seen_exit_keys.clear()
+                self._entries_today = 0
+                self._exits_today = 0
+                self._gross_realized_pnl_today = 0.0
+                self._fees_paid_today = 0.0
+                self._realized_pnl_today = 0.0
+            self._summary_day_key = day_key
+
+            signal_key = (trade_id, signal_type)
+            if signal_type in (SignalType.ENTRY_LONG.value, SignalType.ENTRY_SHORT.value):
+                if signal_key not in seen_entry_keys:
+                    self._entries_today += 1
+                    seen_entry_keys.add(signal_key)
+            elif signal_type == SignalType.EXIT.value and signal_key not in seen_exit_keys:
+                self._exits_today += 1
+                seen_exit_keys.add(signal_key)
+
+            self._apply_fill_accounting(
+                instrument=str(row["instrument"]),
+                side=str(row["side"]).upper(),
+                quantity=int(row["quantity"]),
+                fill_price=float(row["price"]),
+                fees=float(row["fees"]),
+            )
+
+            seq = self._parse_fill_sequence(str(row["fill_id"]))
+            if seq is not None:
+                self._fill_seq = max(self._fill_seq, seq)
+        self._refresh_mark_to_market(market_data={})
+
+    def _apply_fill_accounting(
+        self,
+        *,
+        instrument: str,
+        side: str,
+        quantity: int,
+        fill_price: float,
+        fees: float,
+    ) -> None:
+        notional = abs(float(fill_price) * int(quantity))
+        realized_delta = self._update_position_and_realized_pnl(
+            instrument=instrument,
+            side=side,
+            quantity=quantity,
+            fill_price=fill_price,
+        )
+        self._gross_realized_pnl_today += realized_delta
+        self._fees_paid_today += fees
+        self._realized_pnl_today += realized_delta - fees
+        self._current_balance += realized_delta - fees
+        if side == "BUY":
+            self._cash -= notional + fees
+        else:
+            self._cash += notional - fees
+        self._last_price_by_instrument[instrument] = float(fill_price)
 
     def _can_enter_short(self, signal: Signal, *, market_data: dict[str, Any]) -> bool:
         required_margin = self._estimate_required_margin(signal, market_data=market_data)
@@ -199,7 +599,7 @@ class PaperExecutionEngine:
                 resolved = None
             if resolved is not None and float(resolved) > 0.0:
                 return float(resolved), "kite"
-        return float(self.paper_capital or self.initial_capital), "paper_capital"
+        return float(self._current_balance), "paper_balance"
 
     def read_fills(
         self,
@@ -267,20 +667,13 @@ class PaperExecutionEngine:
                     "confidence": float(signal.confidence),
                 }
             )
-            realized_delta = self._update_position_and_realized_pnl(
+            self._apply_fill_accounting(
                 instrument=instrument,
                 side=action,
                 quantity=quantity,
                 fill_price=filled_price,
+                fees=fees,
             )
-            self._gross_realized_pnl_today += realized_delta
-            self._fees_paid_today += fees
-            self._realized_pnl_today += realized_delta - fees
-            if action == "BUY":
-                self._cash -= notional + fees
-            else:
-                self._cash += notional - fees
-            self._last_price_by_instrument[instrument] = float(filled_price)
             # TODO: Wire strategy state updates (on_fill)
             # once runtime tracks strategy instances per signal.
         return out
@@ -363,6 +756,9 @@ class PaperExecutionEngine:
             "gross_pnl": gross_pnl,
             "fees": fees,
             "net_pnl": net_pnl,
+            "realized_balance": float(self._current_balance),
+            "mtm_balance": float(self._mtm_balance),
+            "unrealized_pnl": float(self._unrealized_pnl_current),
             "cash_balance": float(self._cash),
             "margin_utilisation_pct": self._estimate_margin_utilisation_pct(),
         }
@@ -467,7 +863,7 @@ class PaperExecutionEngine:
         return f"{strategy}:{instrument}:{ts}"
 
     def _estimate_margin_utilisation_pct(self) -> float:
-        capital = float(self.paper_capital or self.initial_capital)
+        capital = float(self._current_balance)
         if capital <= 0.0:
             return 0.0
         gross_notional = 0.0
@@ -524,6 +920,26 @@ class PaperExecutionEngine:
         if action == "BUY":
             return price + slip
         return max(0.0, price - slip)
+
+    def _refresh_mark_to_market(self, *, market_data: dict[str, Any]) -> None:
+        instrument_prices = market_data.get("instrument_prices")
+        if isinstance(instrument_prices, dict):
+            for raw_instrument, raw_price in instrument_prices.items():
+                instrument = str(raw_instrument).strip()
+                if not instrument:
+                    continue
+                try:
+                    price = float(raw_price)
+                except (TypeError, ValueError):
+                    continue
+                if price <= 0.0:
+                    continue
+                self._last_price_by_instrument[instrument] = price
+        default_price = float(
+            market_data.get("last_price", market_data.get("close_price", 0.0)) or 0.0
+        )
+        self._mtm_balance = self._mark_to_market(default_price=default_price)
+        self._unrealized_pnl_current = self._compute_unrealized_pnl(default_price=default_price)
 
     def _mark_to_market(self, *, default_price: float) -> float:
         equity = float(self._cash)
