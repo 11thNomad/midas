@@ -339,6 +339,8 @@ class PaperExecutionEngine:
         by_day = frame.groupby(pd.to_datetime(frame["timestamp"]).dt.strftime("%Y%m%d"), sort=True)
         for day_key, subset in by_day:
             path = self._paper_log_path / f"fills_{day_key}.csv"
+            # Append-only audit trail by design: restarts can create duplicate logical fills
+            # for the same day. Downstream reconciliation can deduplicate by fill_id/trade_id.
             subset.to_csv(path, index=False, mode="a", header=not path.exists())
 
     def _write_daily_summary_csv(self, *, market_data: dict[str, Any]) -> None:
@@ -406,6 +408,7 @@ class PaperExecutionEngine:
 
     @staticmethod
     def _resolve_leg_label(*, signal_type: str, action: str, option_type: str | None) -> str:
+        # Label indicates the original strategy leg being opened/unwound, not the trade action verb.
         opt = (option_type or "").upper()
         side = action.upper()
         st = signal_type.lower()
@@ -473,6 +476,8 @@ class PaperExecutionEngine:
                 continue
             price = float(self._last_price_by_instrument.get(instrument, 0.0) or 0.0)
             gross_notional += abs(float(qty) * price)
+        # Approximation only: uses notional*6% and can overstate utilisation for hedged spreads.
+        # Broker-reported margin should be treated as source of truth for operational decisions.
         margin_estimate = gross_notional * 0.06
         return (margin_estimate / capital) * 100.0
 
