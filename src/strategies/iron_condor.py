@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
+from datetime import time as dt_time
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
@@ -16,6 +18,7 @@ from src.strategies.base import BaseStrategy, RegimeState, Signal, SignalType
 
 logger = logging.getLogger(__name__)
 logger.info("iron_condor.py loaded from: %s", __file__)
+MARKET_TZ = ZoneInfo("Asia/Kolkata")
 
 
 class IronCondorStrategy(BaseStrategy):
@@ -789,7 +792,33 @@ class IronCondorStrategy(BaseStrategy):
             return False
         if ts.date() <= entry_time.date():
             return False
-        return ts.weekday() >= self._resolve_time_exit_weekday()
+        if ts.weekday() < self._resolve_time_exit_weekday():
+            return False
+
+        timeframe = str(self.config.get("timeframe", "")).strip().lower()
+        if timeframe.endswith("d"):
+            # Daily bars do not have intraday timestamps; keep historical calendar-exit behavior.
+            return True
+
+        window_start = self._parse_hhmm(self.config.get("time_exit_window_start"), default="15:10")
+        window_end = self._parse_hhmm(self.config.get("time_exit_window_end"), default="15:20")
+        market_ts = self._to_market_time(ts)
+        now_time = market_ts.time()
+        return window_start <= now_time <= window_end
+
+    @staticmethod
+    def _parse_hhmm(value: object, *, default: str) -> dt_time:
+        raw = str(value or default).strip()
+        try:
+            return datetime.strptime(raw, "%H:%M").time()
+        except ValueError:
+            return datetime.strptime(default, "%H:%M").time()
+
+    @staticmethod
+    def _to_market_time(ts: datetime) -> datetime:
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=UTC)
+        return ts.astimezone(MARKET_TZ)
 
     @staticmethod
     def _entry_credit_from_legs(legs: list[dict[str, Any]]) -> float:

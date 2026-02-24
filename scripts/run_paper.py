@@ -14,7 +14,9 @@ import sys
 import time
 import traceback
 from datetime import UTC, datetime, timedelta
+from datetime import time as dt_time
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import yaml
@@ -44,7 +46,7 @@ from src.regime import (
 )
 from src.risk.circuit_breaker import CircuitBreaker
 from src.signals.pipeline import build_feature_context
-from src.strategies.base import BaseStrategy
+from src.strategies.base import BaseStrategy, Signal, SignalType
 from src.strategies.baseline_trend import BaselineTrendStrategy
 from src.strategies.iron_condor import IronCondorStrategy
 from src.strategies.jade_lizard import JadeLizardStrategy
@@ -53,6 +55,7 @@ from src.strategies.regime_probe import RegimeProbeStrategy
 from src.strategies.router import StrategyRouter
 
 OPTION_CHAIN_DEDUP_COLS = ["timestamp", "expiry", "strike", "option_type"]
+MARKET_TZ = ZoneInfo("Asia/Kolkata")
 
 
 def parse_args() -> argparse.Namespace:
@@ -77,6 +80,7 @@ def load_settings(path: str) -> dict:
 
 def build_strategies(settings: dict) -> list[BaseStrategy]:
     strategies_cfg = settings.get("strategies", {})
+    market_cfg = settings.get("market", {})
     strategies: list[BaseStrategy] = []
     unknown_enabled: list[str] = []
     for name, cfg in strategies_cfg.items():
@@ -87,7 +91,12 @@ def build_strategies(settings: dict) -> list[BaseStrategy]:
         elif name == "baseline_trend":
             strategies.append(BaselineTrendStrategy(name=name, config=cfg))
         elif name == "iron_condor":
-            strategies.append(IronCondorStrategy(name=name, config=cfg))
+            strategy_cfg = {
+                **cfg,
+                "time_exit_window_start": market_cfg.get("exit_window_start", "15:10"),
+                "time_exit_window_end": market_cfg.get("exit_window_end", "15:20"),
+            }
+            strategies.append(IronCondorStrategy(name=name, config=strategy_cfg))
         elif name == "jade_lizard":
             strategies.append(JadeLizardStrategy(name=name, config=cfg))
         elif name == "regime_probe":
@@ -103,6 +112,71 @@ def build_strategies(settings: dict) -> list[BaseStrategy]:
             f"Known strategy ids: {', '.join(known)}"
         )
     return strategies
+
+
+def _parse_hhmm(value: object, default: str) -> dt_time:
+    raw = str(value or default).strip()
+    try:
+        return datetime.strptime(raw, "%H:%M").time()
+    except ValueError:
+        return datetime.strptime(default, "%H:%M").time()
+
+
+def _resolve_entry_window(settings: dict) -> tuple[dt_time, dt_time]:
+    market_cfg = settings.get("market", {})
+    open_time = _parse_hhmm(market_cfg.get("open_time"), "09:15")
+    close_time = _parse_hhmm(market_cfg.get("close_time"), "15:30")
+    entry_buffer_minutes = int(market_cfg.get("entry_buffer_minutes", 15) or 15)
+    exit_buffer_minutes = int(market_cfg.get("exit_buffer_minutes", 10) or 10)
+    last_new_entry_time = market_cfg.get("last_new_entry_time")
+
+    start_dt = datetime.combine(datetime.now().date(), open_time) + timedelta(
+        minutes=entry_buffer_minutes
+    )
+    if last_new_entry_time:
+        end_time = _parse_hhmm(last_new_entry_time, "15:15")
+    else:
+        end_dt = datetime.combine(datetime.now().date(), close_time) - timedelta(
+            minutes=exit_buffer_minutes + 5
+        )
+        end_time = end_dt.time()
+    return start_dt.time(), end_time
+
+
+def _to_ist_naive(ts: datetime) -> datetime:
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=UTC)
+    return ts.astimezone(MARKET_TZ).replace(tzinfo=None)
+
+
+def _filter_entry_signals_by_market_window(
+    *,
+    signals: list[Signal],
+    entry_window_start: dt_time,
+    entry_window_end: dt_time,
+) -> tuple[list[Signal], int]:
+    filtered: list[Signal] = []
+    blocked = 0
+    for strategy_signal in signals:
+        if strategy_signal.signal_type in (SignalType.ENTRY_LONG, SignalType.ENTRY_SHORT):
+            signal_ts_ist = _to_ist_naive(strategy_signal.timestamp)
+            signal_time = signal_ts_ist.time()
+            if signal_time < entry_window_start or signal_time > entry_window_end:
+                blocked += 1
+                entry_window_label = (
+                    f"{entry_window_start.strftime('%H:%M')}-"
+                    f"{entry_window_end.strftime('%H:%M')}"
+                )
+                print(
+                    "ABORT_ENTRY market-hours buffer: "
+                    f"timestamp_ist={signal_ts_ist.isoformat(timespec='seconds')} "
+                    f"window={entry_window_label} "
+                    f"strategy={strategy_signal.strategy_name} "
+                    f"instrument={strategy_signal.instrument}"
+                )
+                continue
+        filtered.append(strategy_signal)
+    return filtered, blocked
 
 
 def _load_or_fetch_candles(
@@ -457,6 +531,11 @@ def main() -> int:
     chain_dte_max_label = chain_dte_max if chain_dte_max is not None else "none"
     print(f"option_chain_dte_bounds=min={chain_dte_min} max={chain_dte_max_label}")
     print(f"bootstrapped_previous_chain_rows={len(previous_chain_df)}")
+    entry_window_start, entry_window_end = _resolve_entry_window(settings)
+    print(
+        "entry_window_ist="
+        f"{entry_window_start.strftime('%H:%M')}-{entry_window_end.strftime('%H:%M')}"
+    )
 
     for i in range(args.iterations):
         if stop_requested:
@@ -547,8 +626,13 @@ def main() -> int:
                 regime=regime,
             )
             all_signals = transition_signals + strategy_signals
+            filtered_signals, blocked_entries = _filter_entry_signals_by_market_window(
+                signals=all_signals,
+                entry_window_start=entry_window_start,
+                entry_window_end=entry_window_end,
+            )
             fills = executor.execute_signals(
-                all_signals,
+                filtered_signals,
                 market_data={
                     "timestamp": loop_ts,
                     "vix": vix_value,
@@ -564,6 +648,7 @@ def main() -> int:
                 f"chain_rows={len(chain_df)} chain_expiry={chain_expiry_label} "
                 f"transition_signals={len(transition_signals)} "
                 f"strategy_signals={len(strategy_signals)} "
+                f"blocked_entries={blocked_entries} "
                 f"fills={len(fills)}"
             )
             if not chain_df.empty:
