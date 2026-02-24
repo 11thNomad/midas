@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 
-def _load_build_strategies():
+def _load_run_paper_module():
     root = Path(__file__).resolve().parents[2]
     module_path = root / "scripts" / "run_paper.py"
     spec = importlib.util.spec_from_file_location("run_paper_module", module_path)
@@ -14,10 +14,11 @@ def _load_build_strategies():
         raise RuntimeError(f"Unable to load module from {module_path}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module.build_strategies
+    return module
 
 
-build_strategies = _load_build_strategies()
+run_paper_module = _load_run_paper_module()
+build_strategies = run_paper_module.build_strategies
 
 
 def test_build_strategies_raises_for_unknown_enabled_strategy():
@@ -76,3 +77,15 @@ def test_build_strategies_includes_baseline_trend_when_enabled():
     strategies = build_strategies(settings)
     names = sorted(strategy.name for strategy in strategies)
     assert names == ["baseline_trend", "iron_condor"]
+
+
+def test_kite_available_cash_ignores_utilised_only_payload():
+    class _DummyKite:
+        @staticmethod
+        def margins():
+            return {"equity": {"available": {"utilised": 250000}}}
+
+    class _DummyFeed:
+        _kite = _DummyKite()
+
+    assert run_paper_module._kite_available_cash(_DummyFeed()) is None

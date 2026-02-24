@@ -413,3 +413,28 @@ def test_iron_condor_skips_entry_when_no_expiry_in_dte_window():
     )
     assert signal.signal_type == SignalType.NO_SIGNAL
     assert "DTE bounds" in signal.reason
+
+
+def test_iron_condor_intraday_time_exit_forces_after_window_end():
+    strategy = IronCondorStrategy(
+        name="iron_condor",
+        config={
+            "instrument": "NIFTY",
+            "timeframe": "5m",
+            "enable_time_exit": True,
+            "time_exit_day": "Wednesday",
+            "time_exit_window_start": "15:10",
+            "time_exit_window_end": "15:20",
+        },
+    )
+    strategy.state.current_position = {
+        "entry_time": datetime(2026, 1, 5, 9, 15),  # Monday
+        "legs": [],
+        "entry_credit": 1.0,
+        "quantity": 1,
+    }
+
+    # 08:00 UTC = 13:30 IST, before the configured window.
+    assert strategy._is_time_exit(datetime(2026, 1, 7, 8, 0)) is False
+    # 10:00 UTC = 15:30 IST, after the configured window; must force exit.
+    assert strategy._is_time_exit(datetime(2026, 1, 7, 10, 0)) is True

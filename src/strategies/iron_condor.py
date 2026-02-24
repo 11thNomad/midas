@@ -792,7 +792,8 @@ class IronCondorStrategy(BaseStrategy):
             return False
         if ts.date() <= entry_time.date():
             return False
-        if ts.weekday() < self._resolve_time_exit_weekday():
+        exit_weekday = self._resolve_time_exit_weekday()
+        if ts.weekday() < exit_weekday:
             return False
 
         timeframe = str(self.config.get("timeframe", "")).strip().lower()
@@ -804,7 +805,19 @@ class IronCondorStrategy(BaseStrategy):
         window_end = self._parse_hhmm(self.config.get("time_exit_window_end"), default="15:20")
         market_ts = self._to_market_time(ts)
         now_time = market_ts.time()
-        return window_start <= now_time <= window_end
+        if ts.weekday() > exit_weekday:
+            return True
+        if window_start <= now_time <= window_end:
+            return True
+        if now_time > window_end:
+            logger.warning(
+                "Time exit window missed at %s (window %s-%s); forcing exit",
+                market_ts.isoformat(timespec="seconds"),
+                window_start.strftime("%H:%M"),
+                window_end.strftime("%H:%M"),
+            )
+            return True
+        return False
 
     @staticmethod
     def _parse_hhmm(value: object, *, default: str) -> dt_time:

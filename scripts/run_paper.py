@@ -207,7 +207,6 @@ def _kite_available_cash(feed: KiteFeed) -> float | None:
         available.get("live_balance"),
         available.get("cash"),
         available.get("opening_balance"),
-        available.get("utilised"),
         available.get("net"),
         margins.get("available_cash"),
     )
