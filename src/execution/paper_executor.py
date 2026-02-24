@@ -24,6 +24,7 @@ class PaperExecutionEngine:
     base_dir: str = "data/cache"
     dataset: str = "paper_fills"
     slippage_bps: float = 5.0
+    slippage_multiplier: float = 1.0
     commission_per_order: float = 20.0
     initial_capital: float = 150_000.0
     paper_capital: float | None = None
@@ -255,7 +256,8 @@ class PaperExecutionEngine:
         return 1.0
 
     def _apply_slippage(self, price: float, *, action: str) -> float:
-        slip = (self.slippage_bps / 10_000.0) * price
+        effective_bps = self.slippage_bps * max(float(self.slippage_multiplier), 0.0)
+        slip = (effective_bps / 10_000.0) * price
         if action == "BUY":
             return price + slip
         return max(0.0, price - slip)

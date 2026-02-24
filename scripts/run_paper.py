@@ -545,9 +545,11 @@ def main() -> int:
     paper_cfg = settings.get("paper_trading", {})
     paper_capital = float(paper_cfg.get("paper_capital", initial_capital) or initial_capital)
     margin_buffer_pct = float(paper_cfg.get("margin_buffer_pct", 15.0) or 15.0)
+    slippage_multiplier = float(paper_cfg.get("slippage_multiplier", 1.5) or 1.5)
     executor = PaperExecutionEngine(
         base_dir=str(cache_dir),
         slippage_bps=slippage_pct * 100.0,
+        slippage_multiplier=slippage_multiplier,
         commission_per_order=float(backtest_cfg.get("commission_per_order", 20.0) or 20.0),
         initial_capital=initial_capital,
         paper_capital=paper_capital,
@@ -570,7 +572,12 @@ def main() -> int:
     print("=" * 72)
     print(f"symbol={args.symbol} timeframe={args.timeframe} iterations={args.iterations}")
     print(f"initial_capital={initial_capital:.2f}")
-    print(f"paper_capital={paper_capital:.2f} margin_buffer_pct={margin_buffer_pct:.2f}")
+    print(
+        "paper_capital="
+        f"{paper_capital:.2f} "
+        f"margin_buffer_pct={margin_buffer_pct:.2f} "
+        f"slippage_multiplier={slippage_multiplier:.2f}"
+    )
     print(f"cache_dir={cache_dir}")
     print(f"enabled_strategies={[s.name for s in router.strategies]}")
     chain_dte_max_label = chain_dte_max if chain_dte_max is not None else "none"

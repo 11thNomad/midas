@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime
 
+import pytest
+
 from src.execution.paper_executor import PaperExecutionEngine
 from src.strategies.base import RegimeState, Signal, SignalType
 
@@ -143,3 +145,42 @@ def test_paper_executor_uses_resolver_before_paper_capital(tmp_path):
     )
     fills = engine.execute_signals([entry], market_data={"symbol": "NIFTY", "last_price": 100.0})
     assert fills == []
+
+
+def test_paper_executor_applies_slippage_multiplier_to_buy_and_sell(tmp_path):
+    engine = PaperExecutionEngine(
+        base_dir=str(tmp_path / "cache"),
+        slippage_bps=5.0,  # 0.05%
+        slippage_multiplier=1.5,  # effective 0.075%
+        commission_per_order=0.0,
+        paper_capital=200_000.0,
+    )
+    buy_signal = Signal(
+        signal_type=SignalType.ENTRY_LONG,
+        strategy_name="dummy",
+        instrument="NIFTY",
+        timestamp=datetime(2026, 1, 2, 9, 15),
+        orders=[{"symbol": "NIFTY", "action": "BUY", "quantity": 1, "price": 100.0}],
+        regime=RegimeState.LOW_VOL_RANGING,
+    )
+    sell_signal = Signal(
+        signal_type=SignalType.ENTRY_SHORT,
+        strategy_name="dummy",
+        instrument="NIFTY",
+        timestamp=datetime(2026, 1, 2, 9, 16),
+        orders=[{"symbol": "NIFTY", "action": "SELL", "quantity": 1, "price": 100.0}],
+        regime=RegimeState.LOW_VOL_RANGING,
+        indicators={"call_wing": 100.0},
+    )
+
+    buy_fills = engine.execute_signals(
+        [buy_signal],
+        market_data={"symbol": "NIFTY", "last_price": 100.0},
+    )
+    sell_fills = engine.execute_signals(
+        [sell_signal],
+        market_data={"symbol": "NIFTY", "last_price": 100.0, "close_price": 100.0},
+    )
+
+    assert buy_fills[0]["price"] == pytest.approx(100.075, rel=1e-9)
+    assert sell_fills[0]["price"] == pytest.approx(99.925, rel=1e-9)
