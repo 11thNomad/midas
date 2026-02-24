@@ -100,3 +100,46 @@ def test_paper_executor_infers_exit_quantity_from_open_position(tmp_path):
     )
     assert exit_fills[0]["side"] == "SELL"
     assert exit_fills[0]["quantity"] == 2
+
+
+def test_paper_executor_aborts_entry_short_on_insufficient_margin(tmp_path):
+    engine = PaperExecutionEngine(
+        base_dir=str(tmp_path / "cache"),
+        slippage_bps=0.0,
+        commission_per_order=0.0,
+        paper_capital=100.0,
+        margin_buffer_pct=15.0,
+    )
+    entry = Signal(
+        signal_type=SignalType.ENTRY_SHORT,
+        strategy_name="iron_condor",
+        instrument="NIFTY",
+        timestamp=datetime(2026, 1, 2, 9, 15),
+        orders=[{"symbol": "NIFTY", "action": "SELL", "quantity": 75, "price": 100.0}],
+        regime=RegimeState.LOW_VOL_RANGING,
+        indicators={"call_wing": 100.0},
+    )
+    fills = engine.execute_signals([entry], market_data={"symbol": "NIFTY", "last_price": 100.0})
+    assert fills == []
+
+
+def test_paper_executor_uses_resolver_before_paper_capital(tmp_path):
+    engine = PaperExecutionEngine(
+        base_dir=str(tmp_path / "cache"),
+        slippage_bps=0.0,
+        commission_per_order=0.0,
+        paper_capital=500_000.0,
+        margin_buffer_pct=15.0,
+        available_cash_resolver=lambda: 100.0,
+    )
+    entry = Signal(
+        signal_type=SignalType.ENTRY_SHORT,
+        strategy_name="iron_condor",
+        instrument="NIFTY",
+        timestamp=datetime(2026, 1, 2, 9, 15),
+        orders=[{"symbol": "NIFTY", "action": "SELL", "quantity": 75, "price": 100.0}],
+        regime=RegimeState.LOW_VOL_RANGING,
+        indicators={"call_wing": 100.0},
+    )
+    fills = engine.execute_signals([entry], market_data={"symbol": "NIFTY", "last_price": 100.0})
+    assert fills == []

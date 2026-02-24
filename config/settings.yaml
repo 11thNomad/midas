@@ -91,6 +91,11 @@ risk:
   # Kill switch — if True, no orders placed regardless of signals
   kill_switch: false
 
+# === Paper Trading ===
+paper_trading:
+  paper_capital: 150000
+  margin_buffer_pct: 15
+
 # === Strategies ===
 strategies:
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -11,6 +13,8 @@ import pandas as pd
 from src.data.store import DataStore
 from src.risk.circuit_breaker import CircuitBreaker
 from src.strategies.base import Signal, SignalType
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -22,6 +26,9 @@ class PaperExecutionEngine:
     slippage_bps: float = 5.0
     commission_per_order: float = 20.0
     initial_capital: float = 150_000.0
+    paper_capital: float | None = None
+    margin_buffer_pct: float = 15.0
+    available_cash_resolver: Callable[[], float | None] | None = None
     circuit_breaker: CircuitBreaker | None = None
     _store: DataStore = field(init=False, repr=False)
     _fill_seq: int = field(default=0, init=False, repr=False)
@@ -36,6 +43,8 @@ class PaperExecutionEngine:
     def __post_init__(self) -> None:
         self._store = DataStore(base_dir=self.base_dir)
         self._cash = float(self.initial_capital)
+        if self.paper_capital is None:
+            self.paper_capital = float(self.initial_capital)
 
     def execute_signals(
         self, signals: list[Signal], *, market_data: dict[str, Any] | None = None
@@ -48,6 +57,8 @@ class PaperExecutionEngine:
             if not signal.is_actionable:
                 continue
             if self.circuit_breaker is not None and not self.circuit_breaker.can_trade():
+                continue
+            if signal.signal_type == SignalType.ENTRY_SHORT and not self._can_enter_short(signal):
                 continue
             fills.extend(self._fills_for_signal(signal, market_data=market_data))
 
@@ -76,6 +87,42 @@ class PaperExecutionEngine:
             )
 
         return fills
+
+    def _can_enter_short(self, signal: Signal) -> bool:
+        required_margin = self._estimate_required_margin(signal)
+        required_with_buffer = required_margin * (1.0 + (self.margin_buffer_pct / 100.0))
+        available_cash, cash_source = self._resolve_available_cash()
+        if available_cash >= required_with_buffer:
+            return True
+        logger.warning(
+            "ABORT_ENTRY - insufficient margin (available: %.2f, required: %.2f, source: %s)",
+            available_cash,
+            required_with_buffer,
+            cash_source,
+        )
+        return False
+
+    def _estimate_required_margin(self, signal: Signal) -> float:
+        indicators = signal.indicators if isinstance(signal.indicators, dict) else {}
+        wing_width = float(
+            indicators.get("call_wing")
+            or indicators.get("put_wing")
+            or indicators.get("wing_width")
+            or 100.0
+        )
+        orders = signal.orders or []
+        lot_size = max((int(order.get("quantity", 1) or 1) for order in orders), default=1)
+        return wing_width * float(lot_size) * 1.5
+
+    def _resolve_available_cash(self) -> tuple[float, str]:
+        if self.available_cash_resolver is not None:
+            try:
+                resolved = self.available_cash_resolver()
+            except Exception:  # pragma: no cover - defensive runtime guard
+                resolved = None
+            if resolved is not None and float(resolved) > 0.0:
+                return float(resolved), "kite"
+        return float(self.paper_capital or self.initial_capital), "paper_capital"
 
     def read_fills(
         self,

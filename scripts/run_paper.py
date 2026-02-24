@@ -179,6 +179,45 @@ def _filter_entry_signals_by_market_window(
     return filtered, blocked
 
 
+def _kite_available_cash(feed: KiteFeed) -> float | None:
+    client = getattr(feed, "_kite", None)
+    if client is None:
+        return None
+    try:
+        margins = client.margins()
+    except Exception:
+        return None
+    if not isinstance(margins, dict):
+        return None
+
+    def _as_float(value: object) -> float | None:
+        try:
+            if value is None:
+                return None
+            parsed = float(value)
+            if parsed <= 0.0:
+                return None
+            return parsed
+        except (TypeError, ValueError):
+            return None
+
+    equity = margins.get("equity") if isinstance(margins.get("equity"), dict) else {}
+    available = equity.get("available") if isinstance(equity.get("available"), dict) else {}
+    candidates = (
+        available.get("live_balance"),
+        available.get("cash"),
+        available.get("opening_balance"),
+        available.get("utilised"),
+        available.get("net"),
+        margins.get("available_cash"),
+    )
+    for raw in candidates:
+        resolved = _as_float(raw)
+        if resolved is not None:
+            return resolved
+    return None
+
+
 def _load_or_fetch_candles(
     *,
     store: DataStore,
@@ -504,11 +543,17 @@ def main() -> int:
         max_drawdown_pct=float(risk_cfg.get("max_drawdown_pct", 15.0) or 15.0),
         max_open_positions=int(risk_cfg.get("max_open_positions", 4) or 4),
     )
+    paper_cfg = settings.get("paper_trading", {})
+    paper_capital = float(paper_cfg.get("paper_capital", initial_capital) or initial_capital)
+    margin_buffer_pct = float(paper_cfg.get("margin_buffer_pct", 15.0) or 15.0)
     executor = PaperExecutionEngine(
         base_dir=str(cache_dir),
         slippage_bps=slippage_pct * 100.0,
         commission_per_order=float(backtest_cfg.get("commission_per_order", 20.0) or 20.0),
         initial_capital=initial_capital,
+        paper_capital=paper_capital,
+        margin_buffer_pct=margin_buffer_pct,
+        available_cash_resolver=lambda: _kite_available_cash(feed),
         circuit_breaker=breaker,
     )
     stop_requested = False
@@ -526,6 +571,7 @@ def main() -> int:
     print("=" * 72)
     print(f"symbol={args.symbol} timeframe={args.timeframe} iterations={args.iterations}")
     print(f"initial_capital={initial_capital:.2f}")
+    print(f"paper_capital={paper_capital:.2f} margin_buffer_pct={margin_buffer_pct:.2f}")
     print(f"cache_dir={cache_dir}")
     print(f"enabled_strategies={[s.name for s in router.strategies]}")
     chain_dte_max_label = chain_dte_max if chain_dte_max is not None else "none"
