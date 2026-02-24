@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from src.strategies.base import BaseStrategy, RegimeState, Signal
+from src.strategies.base import BaseStrategy, RegimeState, Signal, SignalType
 
 
 @dataclass
@@ -66,4 +66,18 @@ class StrategyRouter:
             signal = strategy.generate_signal(market_data=market_data, regime=regime)
             if signal.is_actionable:
                 out.append(signal)
+        return out
+
+    def generate_exit_signals(self, market_data: dict[str, Any]) -> list[Signal]:
+        """Collect explicit exit-condition signals for strategies with open positions."""
+        out: list[Signal] = []
+        for strategy in self.strategies:
+            if strategy.state.current_position is None:
+                continue
+            signal = strategy.get_exit_conditions(market_data=market_data)
+            if signal is None or not signal.is_actionable:
+                continue
+            if signal.signal_type != SignalType.EXIT:
+                continue
+            out.append(signal)
         return out

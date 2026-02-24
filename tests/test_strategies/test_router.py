@@ -55,3 +55,33 @@ def test_router_activates_strategy_when_regime_matches():
 
     assert transition_signals == []
     assert strategy.state.is_active is True
+
+
+def test_router_generate_exit_signals_only_for_open_positions():
+    class ExitStrategy(DummyStrategy):
+        def get_exit_conditions(self, market_data: dict) -> Signal | None:
+            return Signal(
+                signal_type=SignalType.EXIT,
+                strategy_name=self.name,
+                instrument="NIFTY",
+                timestamp=market_data["timestamp"],
+                regime=RegimeState.LOW_VOL_RANGING,
+                reason="exit",
+            )
+
+    open_strategy = ExitStrategy(
+        name="open",
+        config={"instrument": "NIFTY", "active_regimes": [RegimeState.LOW_VOL_RANGING.value]},
+    )
+    open_strategy.state.current_position = {"symbol": "NIFTY"}
+    closed_strategy = ExitStrategy(
+        name="closed",
+        config={"instrument": "NIFTY", "active_regimes": [RegimeState.LOW_VOL_RANGING.value]},
+    )
+    closed_strategy.state.current_position = None
+    router = StrategyRouter(strategies=[open_strategy, closed_strategy])
+
+    out = router.generate_exit_signals({"timestamp": datetime(2026, 1, 1)})
+    assert len(out) == 1
+    assert out[0].strategy_name == "open"
+    assert out[0].signal_type == SignalType.EXIT

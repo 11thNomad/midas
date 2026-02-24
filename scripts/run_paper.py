@@ -445,6 +445,174 @@ def _instrument_price_map(
     return prices
 
 
+def _option_quote_map(chain_df: pd.DataFrame) -> dict[str, dict[str, float]]:
+    quotes: dict[str, dict[str, float]] = {}
+    if chain_df.empty or "symbol" not in chain_df.columns:
+        return quotes
+    for _, row in chain_df.iterrows():
+        symbol = str(row.get("symbol", "")).strip()
+        if not symbol:
+            continue
+        bid = pd.to_numeric(row.get("bid"), errors="coerce")
+        ask = pd.to_numeric(row.get("ask"), errors="coerce")
+        ltp = pd.to_numeric(row.get("ltp"), errors="coerce")
+        quote: dict[str, float] = {}
+        if not pd.isna(bid) and float(bid) > 0.0:
+            quote["bid"] = float(bid)
+        if not pd.isna(ask) and float(ask) > 0.0:
+            quote["ask"] = float(ask)
+        if "bid" in quote and "ask" in quote:
+            quote["mid"] = (quote["bid"] + quote["ask"]) / 2.0
+        if not pd.isna(ltp) and float(ltp) > 0.0:
+            quote["ltp"] = float(ltp)
+        if quote:
+            quotes[symbol] = quote
+    return quotes
+
+
+def _lot_size_by_underlying(settings: dict) -> dict[str, int]:
+    out: dict[str, int] = {}
+    strategies_cfg = settings.get("strategies", {})
+    for name in ("iron_condor", "jade_lizard"):
+        cfg = strategies_cfg.get(name, {})
+        if not cfg or not cfg.get("enabled", False):
+            continue
+        instrument = str(cfg.get("instrument", "NIFTY")).upper()
+        lot_raw = cfg.get("lot_size")
+        try:
+            lot_size = int(lot_raw) if lot_raw is not None else 0
+        except (TypeError, ValueError):
+            lot_size = 0
+        if lot_size > 0:
+            out[instrument] = lot_size
+    return out
+
+
+def _is_wednesday_watchdog_trigger(timestamp: datetime) -> bool:
+    ts_ist = _to_ist_naive(timestamp)
+    if ts_ist.weekday() != 2:
+        return False
+    return ts_ist.time() >= dt_time(15, 25)
+
+
+def _freshness_issues(
+    *,
+    candles: pd.DataFrame,
+    vix: pd.DataFrame,
+    now: datetime,
+    settings: dict,
+) -> list[str]:
+    def _as_market_ist_naive(ts: pd.Timestamp) -> datetime:
+        if ts.tzinfo is None:
+            return ts.to_pydatetime().replace(tzinfo=None)
+        return ts.tz_convert(MARKET_TZ).to_pydatetime().replace(tzinfo=None)
+
+    issues: list[str] = []
+    now_ist = _to_ist_naive(now)
+    freshness_cfg = settings.get("ops", {}).get("freshness", {})
+    max_candle_age = int(freshness_cfg.get("candles_runtime_max_age_minutes", 24 * 60) or 24 * 60)
+    max_vix_age = int(freshness_cfg.get("vix_1d_max_age_minutes", 3 * 24 * 60) or 3 * 24 * 60)
+
+    if candles.empty:
+        issues.append("candles_missing")
+    else:
+        if "timestamp" in candles.columns:
+            candle_ts = pd.to_datetime(candles["timestamp"], errors="coerce").dropna()
+        else:
+            candle_ts = pd.to_datetime(candles.index, errors="coerce")
+            candle_ts = pd.Series(candle_ts).dropna()
+        if candle_ts.empty:
+            issues.append("candles_timestamp_invalid")
+        else:
+            latest_ist = _as_market_ist_naive(pd.Timestamp(candle_ts.max()))
+            age = max(0.0, (now_ist - latest_ist).total_seconds() / 60.0)
+            if age > float(max_candle_age):
+                issues.append(f"candles_stale_{age:.1f}m>{max_candle_age}m")
+
+    if vix.empty:
+        issues.append("vix_missing")
+    else:
+        if "timestamp" in vix.columns:
+            vix_ts = pd.to_datetime(vix["timestamp"], errors="coerce").dropna()
+        else:
+            vix_ts = pd.to_datetime(vix.index, errors="coerce")
+            vix_ts = pd.Series(vix_ts).dropna()
+        if vix_ts.empty:
+            issues.append("vix_timestamp_invalid")
+        else:
+            latest_ist = _as_market_ist_naive(pd.Timestamp(vix_ts.max()))
+            age = max(0.0, (now_ist - latest_ist).total_seconds() / 60.0)
+            if age > float(max_vix_age):
+                issues.append(f"vix_stale_{age:.1f}m>{max_vix_age}m")
+    return issues
+
+
+def _sync_strategy_state_from_fills(router: StrategyRouter, fills: list[dict]) -> None:
+    by_name = {strategy.name: strategy for strategy in router.strategies}
+    for fill in fills:
+        strategy_name = str(fill.get("strategy_name", "")).strip()
+        strategy = by_name.get(strategy_name)
+        if strategy is None:
+            continue
+        raw_signal_type = str(fill.get("signal_type", "")).strip().lower()
+        signal_type = next(
+            (signal for signal in SignalType if signal.value == raw_signal_type),
+            None,
+        )
+        timestamp = pd.to_datetime(fill.get("timestamp"), errors="coerce")
+        if pd.isna(timestamp):
+            timestamp = pd.Timestamp(datetime.now())
+        strategy.on_fill(
+            str(fill.get("fill_id", "")),
+            float(fill.get("price", 0.0) or 0.0),
+            int(fill.get("quantity", 0) or 0),
+            timestamp.to_pydatetime(),
+            signal_type=signal_type,
+        )
+
+
+def _rollback_unfilled_entry_state(
+    *,
+    router: StrategyRouter,
+    signals: list[Signal],
+    fills: list[dict],
+) -> None:
+    by_name = {strategy.name: strategy for strategy in router.strategies}
+    filled_keys: set[tuple[str, str, str]] = set()
+    for fill in fills:
+        strategy_name = str(fill.get("strategy_name", "")).strip()
+        signal_type = str(fill.get("signal_type", "")).strip().lower()
+        ts = pd.to_datetime(fill.get("timestamp"), errors="coerce")
+        if not strategy_name or not signal_type or pd.isna(ts):
+            continue
+        filled_keys.add((strategy_name, signal_type, ts.isoformat()))
+
+    for strategy_signal in signals:
+        if strategy_signal.signal_type not in (SignalType.ENTRY_LONG, SignalType.ENTRY_SHORT):
+            continue
+        key = (
+            strategy_signal.strategy_name,
+            strategy_signal.signal_type.value,
+            pd.Timestamp(strategy_signal.timestamp).isoformat(),
+        )
+        if key in filled_keys:
+            continue
+        strategy = by_name.get(strategy_signal.strategy_name)
+        if strategy is None:
+            continue
+        strategy.state.current_position = None
+
+
+def _clear_strategy_positions_for_system_fills(router: StrategyRouter, fills: list[dict]) -> None:
+    has_system_close = any(
+        str(fill.get("strategy_name", "")).strip() in {"watchdog", "expiry_settlement"}
+        for fill in fills
+    )
+    if not has_system_close:
+        return
+    for strategy in router.strategies:
+        strategy.state.current_position = None
+
 def _load_latest_option_chain_snapshot(
     *,
     store: DataStore,
@@ -621,6 +789,7 @@ def main() -> int:
     print(f"option_chain_dte_bounds=min={chain_dte_min} max={chain_dte_max_label}")
     print(f"bootstrapped_previous_chain_rows={len(previous_chain_df)}")
     entry_window_start, entry_window_end = _resolve_entry_window(settings)
+    lot_size_by_underlying = _lot_size_by_underlying(settings)
     print(
         "entry_window_ist="
         f"{entry_window_start.strftime('%H:%M')}-{entry_window_end.strftime('%H:%M')}"
@@ -674,6 +843,53 @@ def main() -> int:
                 if vix_series is not None and not vix_series.empty
                 else 0.0
             )
+            underlying_price = (
+                float(chain_df["underlying_price"].iloc[-1])
+                if not chain_df.empty and "underlying_price" in chain_df.columns
+                else float(candles["close"].iloc[-1])
+            )
+            option_quotes = _option_quote_map(chain_df)
+            instrument_prices = _instrument_price_map(
+                chain_df=chain_df,
+                underlying_symbol=args.symbol,
+                underlying_price=underlying_price,
+            )
+            watchdog_force_exit = _is_wednesday_watchdog_trigger(loop_ts)
+            freshness_issues = _freshness_issues(
+                candles=candles,
+                vix=vix,
+                now=loop_ts,
+                settings=settings,
+            )
+            if freshness_issues:
+                fills = executor.execute_signals(
+                    [],
+                    market_data={
+                        "timestamp": loop_ts,
+                        "vix": vix_value,
+                        "symbol": args.symbol,
+                        "close_price": underlying_price,
+                        "instrument_prices": instrument_prices,
+                        "option_quotes": option_quotes,
+                        "underlying_prices": {str(args.symbol).upper(): underlying_price},
+                        "lot_size_by_underlying": lot_size_by_underlying,
+                        "force_exit_all": watchdog_force_exit,
+                        "force_exit_reason": "watchdog_wed_1525_force_exit",
+                    },
+                )
+                _sync_strategy_state_from_fills(router, fills)
+                _clear_strategy_positions_for_system_fills(router, fills)
+                print(
+                    f"[{i + 1}/{args.iterations}] stale_data="
+                    f"{'|'.join(freshness_issues)} watchdog={int(watchdog_force_exit)} "
+                    f"fills={len(fills)}"
+                )
+                if not chain_df.empty:
+                    previous_chain_df = chain_df
+                if i < args.iterations - 1:
+                    time.sleep(args.sleep_seconds)
+                continue
+
             signal_snapshot, regime_signals = build_feature_context(
                 timestamp=loop_ts,
                 symbol=args.symbol,
@@ -694,16 +910,30 @@ def main() -> int:
                 chain_quality_thresholds=chain_quality_thresholds,
                 source="paper_loop",
             )
-
-            underlying_price = (
-                float(chain_df["underlying_price"].iloc[-1])
-                if not chain_df.empty and "underlying_price" in chain_df.columns
-                else float(candles["close"].iloc[-1])
-            )
             regime, transition_signals = runtime.process(
                 regime_signals,
                 signal_snapshot=signal_snapshot,
             )
+            strategy_market_data = {
+                "timestamp": loop_ts,
+                "candles": candles,
+                "vix": vix_value,
+                "option_chain": chain_df,
+                "underlying_price": underlying_price,
+                "regime": regime,
+            }
+            strategy_exit_signals = router.generate_exit_signals(market_data=strategy_market_data)
+            transition_non_exit_signals = [
+                s for s in transition_signals if s.signal_type != SignalType.EXIT
+            ]
+            transition_exit_signals = [
+                s for s in transition_signals if s.signal_type == SignalType.EXIT
+            ]
+            dedup_exit_by_strategy: dict[str, Signal] = {}
+            for sig in transition_exit_signals + strategy_exit_signals:
+                dedup_exit_by_strategy.setdefault(sig.strategy_name, sig)
+            exit_signals = list(dedup_exit_by_strategy.values())
+
             strategy_signals = router.generate_signals(
                 market_data={
                     "timestamp": loop_ts,
@@ -714,7 +944,13 @@ def main() -> int:
                 },
                 regime=regime,
             )
-            all_signals = transition_signals + strategy_signals
+            blocked_entry_strategies = {sig.strategy_name for sig in exit_signals}
+            strategy_signals = [
+                sig
+                for sig in strategy_signals
+                if sig.strategy_name not in blocked_entry_strategies
+            ]
+            all_signals = transition_non_exit_signals + exit_signals + strategy_signals
             filtered_signals, blocked_entries = _filter_entry_signals_by_market_window(
                 signals=all_signals,
                 entry_window_start=entry_window_start,
@@ -728,13 +964,17 @@ def main() -> int:
                     "adx": float(regime_signals.adx_14),
                     "symbol": args.symbol,
                     "close_price": underlying_price,
-                    "instrument_prices": _instrument_price_map(
-                        chain_df=chain_df,
-                        underlying_symbol=args.symbol,
-                        underlying_price=underlying_price,
-                    ),
+                    "instrument_prices": instrument_prices,
+                    "option_quotes": option_quotes,
+                    "underlying_prices": {str(args.symbol).upper(): underlying_price},
+                    "lot_size_by_underlying": lot_size_by_underlying,
+                    "force_exit_all": watchdog_force_exit,
+                    "force_exit_reason": "watchdog_wed_1525_force_exit",
                 },
             )
+            _sync_strategy_state_from_fills(router, fills)
+            _rollback_unfilled_entry_state(router=router, signals=filtered_signals, fills=fills)
+            _clear_strategy_positions_for_system_fills(router, fills)
 
             chain_expiry_label = chain_expiry.date().isoformat() if chain_expiry else "none"
             print(
@@ -742,8 +982,10 @@ def main() -> int:
                 f"vix={vix_value:.2f} adx={regime_signals.adx_14:.2f} "
                 f"chain_rows={len(chain_df)} chain_expiry={chain_expiry_label} "
                 f"transition_signals={len(transition_signals)} "
+                f"exit_signals={len(exit_signals)} "
                 f"strategy_signals={len(strategy_signals)} "
                 f"blocked_entries={blocked_entries} "
+                f"watchdog={int(watchdog_force_exit)} "
                 f"fills={len(fills)}"
             )
             if not chain_df.empty:

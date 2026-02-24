@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sqlite3
 from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -43,6 +45,9 @@ class PaperExecutionEngine:
     _mtm_balance: float = field(default=0.0, init=False, repr=False)
     _unrealized_pnl_current: float = field(default=0.0, init=False, repr=False)
     _positions: dict[str, int] = field(default_factory=dict, init=False, repr=False)
+    _instrument_meta_by_instrument: dict[str, dict[str, Any]] = field(
+        default_factory=dict, init=False, repr=False
+    )
     _avg_cost_by_instrument: dict[str, float] = field(default_factory=dict, init=False, repr=False)
     _last_price_by_instrument: dict[str, float] = field(
         default_factory=dict, init=False, repr=False
@@ -88,6 +93,9 @@ class PaperExecutionEngine:
         "cash_balance",
         "margin_utilisation_pct",
     )
+    _OPTION_SYMBOL_PATTERN = re.compile(
+        r"^(?P<underlying>[A-Z]+)[_-]?(?P<expiry>\d{8})[_-]?(?P<strike>\d+(?:\.\d+)?)(?P<option_type>CE|PE)$"
+    )
 
     def _starting_capital(self) -> float:
         configured = self.paper_capital
@@ -121,7 +129,11 @@ class PaperExecutionEngine:
         for signal in signals:
             if not signal.is_actionable:
                 continue
-            if self.circuit_breaker is not None and not self.circuit_breaker.can_trade():
+            if (
+                signal.signal_type != SignalType.EXIT
+                and self.circuit_breaker is not None
+                and not self.circuit_breaker.can_trade()
+            ):
                 continue
             if signal.signal_type == SignalType.ENTRY_SHORT and not self._can_enter_short(
                 signal, market_data=market_data
@@ -137,6 +149,23 @@ class PaperExecutionEngine:
                 # Persist state after each actionable signal to minimize restart-loss window.
                 self._persist_state_to_db(fills=signal_fills)
             fills.extend(signal_fills)
+
+        settlement_fills = self._collect_expiry_settlement_fills(market_data=market_data)
+        if settlement_fills:
+            fills.extend(settlement_fills)
+            self._persist_state_to_db(fills=settlement_fills)
+
+        if bool(market_data.get("force_exit_all", False)):
+            watchdog_reason = str(
+                market_data.get("force_exit_reason", "watchdog_wed_1525_force_exit")
+            )
+            watchdog_fills = self._force_exit_all_positions(
+                market_data=market_data,
+                reason=watchdog_reason,
+            )
+            if watchdog_fills:
+                fills.extend(watchdog_fills)
+                self._persist_state_to_db(fills=watchdog_fills)
 
         if fills:
             frame = pd.DataFrame(fills)
@@ -199,6 +228,7 @@ class PaperExecutionEngine:
                     mtm_balance REAL NOT NULL DEFAULT 0.0,
                     unrealized_pnl REAL NOT NULL DEFAULT 0.0,
                     positions_json TEXT NOT NULL,
+                    instrument_meta_json TEXT NOT NULL DEFAULT '{}',
                     avg_cost_json TEXT NOT NULL,
                     last_price_json TEXT NOT NULL,
                     realized_pnl_today REAL NOT NULL,
@@ -236,6 +266,13 @@ class PaperExecutionEngine:
                     ADD COLUMN unrealized_pnl REAL NOT NULL DEFAULT 0.0
                     """
                 )
+            if "instrument_meta_json" not in cols:
+                conn.execute(
+                    """
+                    ALTER TABLE paper_state_snapshot
+                    ADD COLUMN instrument_meta_json TEXT NOT NULL DEFAULT '{}'
+                    """
+                )
 
     def _load_state_from_db(self) -> None:
         with self._connect_state_db() as conn:
@@ -248,6 +285,7 @@ class PaperExecutionEngine:
                     mtm_balance,
                     unrealized_pnl,
                     positions_json,
+                    instrument_meta_json,
                     avg_cost_json,
                     last_price_json,
                     realized_pnl_today,
@@ -275,6 +313,9 @@ class PaperExecutionEngine:
                 )
                 self._unrealized_pnl_current = float(snapshot["unrealized_pnl"])
                 self._positions = self._decode_int_map(snapshot["positions_json"])
+                self._instrument_meta_by_instrument = self._decode_meta_map(
+                    snapshot["instrument_meta_json"]
+                )
                 self._avg_cost_by_instrument = self._decode_float_map(snapshot["avg_cost_json"])
                 self._last_price_by_instrument = self._decode_float_map(snapshot["last_price_json"])
                 self._realized_pnl_today = float(snapshot["realized_pnl_today"])
@@ -336,6 +377,7 @@ class PaperExecutionEngine:
                     mtm_balance,
                     unrealized_pnl,
                     positions_json,
+                    instrument_meta_json,
                     avg_cost_json,
                     last_price_json,
                     realized_pnl_today,
@@ -346,7 +388,7 @@ class PaperExecutionEngine:
                     summary_day_key,
                     updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     fill_seq = excluded.fill_seq,
                     cash = excluded.cash,
@@ -354,6 +396,7 @@ class PaperExecutionEngine:
                     mtm_balance = excluded.mtm_balance,
                     unrealized_pnl = excluded.unrealized_pnl,
                     positions_json = excluded.positions_json,
+                    instrument_meta_json = excluded.instrument_meta_json,
                     avg_cost_json = excluded.avg_cost_json,
                     last_price_json = excluded.last_price_json,
                     realized_pnl_today = excluded.realized_pnl_today,
@@ -372,6 +415,7 @@ class PaperExecutionEngine:
                     float(self._mtm_balance),
                     float(self._unrealized_pnl_current),
                     json.dumps(self._positions, sort_keys=True),
+                    json.dumps(self._instrument_meta_by_instrument, sort_keys=True),
                     json.dumps(self._avg_cost_by_instrument, sort_keys=True),
                     json.dumps(self._last_price_by_instrument, sort_keys=True),
                     float(self._realized_pnl_today),
@@ -421,6 +465,23 @@ class PaperExecutionEngine:
         return out
 
     @staticmethod
+    def _decode_meta_map(raw: object) -> dict[str, dict[str, Any]]:
+        if raw is None:
+            return {}
+        try:
+            payload = json.loads(str(raw))
+        except (TypeError, ValueError):
+            return {}
+        if not isinstance(payload, dict):
+            return {}
+        out: dict[str, dict[str, Any]] = {}
+        for key, value in payload.items():
+            if not isinstance(value, dict):
+                continue
+            out[str(key)] = {str(meta_key): meta_value for meta_key, meta_value in value.items()}
+        return out
+
+    @staticmethod
     def _parse_fill_sequence(fill_id: str) -> int | None:
         raw = fill_id.strip()
         if not raw.startswith("PAPER-"):
@@ -447,6 +508,7 @@ class PaperExecutionEngine:
         self._mtm_balance = float(starting_capital)
         self._unrealized_pnl_current = 0.0
         self._positions = {}
+        self._instrument_meta_by_instrument = {}
         self._avg_cost_by_instrument = {}
         self._last_price_by_instrument = {}
         self._realized_pnl_today = 0.0
@@ -509,6 +571,7 @@ class PaperExecutionEngine:
                 fill_price=float(row["price"]),
                 fees=float(row["fees"]),
             )
+            self._remember_instrument_meta(instrument=str(row["instrument"]), order={})
 
             seq = self._parse_fill_sequence(str(row["fill_id"]))
             if seq is not None:
@@ -540,6 +603,8 @@ class PaperExecutionEngine:
         else:
             self._cash += notional - fees
         self._last_price_by_instrument[instrument] = float(fill_price)
+        if int(self._positions.get(instrument, 0)) == 0:
+            self._instrument_meta_by_instrument.pop(instrument, None)
 
     def _can_enter_short(self, signal: Signal, *, market_data: dict[str, Any]) -> bool:
         required_margin = self._estimate_required_margin(signal, market_data=market_data)
@@ -627,18 +692,32 @@ class PaperExecutionEngine:
         for order in orders:
             self._fill_seq += 1
             instrument = str(order.get("symbol", signal.instrument))
-            raw_price = self._resolve_order_price(order=order, market_data=market_data)
             action = str(
                 order.get("action", self._default_action(signal, symbol=instrument))
             ).upper()
-            filled_price = self._apply_slippage(raw_price, action=action)
+            quantity = int(order.get("quantity", 1) or 1)
             option_type = self._resolve_option_type(order=order, instrument=instrument)
+            if not self._validate_order_quantity(
+                instrument=instrument,
+                quantity=quantity,
+                option_type=option_type,
+                signal_type=signal.signal_type,
+                market_data=market_data,
+            ):
+                continue
+            raw_price = self._resolve_order_price(
+                order=order,
+                market_data=market_data,
+                signal_type=signal.signal_type,
+                action=action,
+            )
+            filled_price = self._apply_slippage(raw_price, action=action)
             leg = self._resolve_leg_label(
                 signal_type=signal.signal_type.value,
                 action=action,
                 option_type=option_type,
             )
-            quantity = int(order.get("quantity", 1) or 1)
+            self._remember_instrument_meta(instrument=instrument, order=order)
 
             notional = abs(filled_price * quantity)
             fees = float(self.commission_per_order)
@@ -674,8 +753,6 @@ class PaperExecutionEngine:
                 fill_price=filled_price,
                 fees=fees,
             )
-            # TODO: Wire strategy state updates (on_fill)
-            # once runtime tracks strategy instances per signal.
         return out
 
     def _write_csv_logs(
@@ -902,8 +979,40 @@ class PaperExecutionEngine:
             return "SELL"
         return "BUY"
 
-    @staticmethod
-    def _resolve_order_price(order: dict[str, Any], market_data: dict[str, Any]) -> float:
+    def _resolve_order_price(
+        self,
+        *,
+        order: dict[str, Any],
+        market_data: dict[str, Any],
+        signal_type: SignalType,
+        action: str,
+    ) -> float:
+        instrument = str(order.get("symbol", "")).strip()
+        option_type = self._resolve_option_type(order=order, instrument=instrument)
+        if signal_type == SignalType.EXIT and option_type in {"CE", "PE"}:
+            option_exit_quote = self._resolve_option_exit_quote(
+                order=order,
+                market_data=market_data,
+                action=action,
+            )
+            if option_exit_quote is not None:
+                return option_exit_quote
+            if "price" in order and order["price"] is not None:
+                return float(order["price"])
+            if "ltp" in order and order["ltp"] is not None:
+                return float(order["ltp"])
+            last_mark = float(self._last_price_by_instrument.get(instrument, 0.0) or 0.0)
+            if last_mark > 0.0:
+                logger.warning(
+                    "OPTION_EXIT_PRICE_FALLBACK last_mark used for %s action=%s", instrument, action
+                )
+                return last_mark
+            logger.warning(
+                "OPTION_EXIT_PRICE_MISSING no quote found for %s action=%s; using 1.0 fallback",
+                instrument,
+                action,
+            )
+            return 1.0
         if "price" in order and order["price"] is not None:
             return float(order["price"])
         if "ltp" in order and order["ltp"] is not None:
@@ -914,12 +1023,346 @@ class PaperExecutionEngine:
             return float(market_data["close_price"])
         return 1.0
 
+    def _resolve_option_exit_quote(
+        self,
+        *,
+        order: dict[str, Any],
+        market_data: dict[str, Any],
+        action: str,
+    ) -> float | None:
+        instrument = str(order.get("symbol", "")).strip()
+        quote_source = market_data.get("option_quotes")
+        quote: dict[str, Any] = {}
+        if isinstance(quote_source, dict):
+            raw = quote_source.get(instrument)
+            if isinstance(raw, dict):
+                quote = raw
+        if not quote:
+            quote = {k: order.get(k) for k in ("bid", "ask", "ltp", "mid")}
+        preferred = "ask" if action.upper() == "BUY" else "bid"
+        for key in (preferred, "mid", "ltp"):
+            value = quote.get(key)
+            try:
+                if value is None:
+                    continue
+                parsed = float(value)
+            except (TypeError, ValueError):
+                continue
+            if parsed <= 0.0:
+                continue
+            if key != preferred:
+                logger.warning(
+                    "OPTION_EXIT_PRICE_FALLBACK instrument=%s action=%s preferred=%s used=%s",
+                    instrument,
+                    action,
+                    preferred,
+                    key,
+                )
+            return parsed
+        return None
+
+    def _validate_order_quantity(
+        self,
+        *,
+        instrument: str,
+        quantity: int,
+        option_type: str | None,
+        signal_type: SignalType,
+        market_data: dict[str, Any],
+    ) -> bool:
+        if quantity <= 0:
+            logger.warning(
+                "SKIP_ORDER invalid quantity=%s instrument=%s signal=%s",
+                quantity,
+                instrument,
+                signal_type.value,
+            )
+            return False
+        if signal_type == SignalType.EXIT:
+            return True
+        if option_type not in {"CE", "PE"}:
+            return True
+        lot_sizes = market_data.get("lot_size_by_underlying")
+        if not isinstance(lot_sizes, dict):
+            return True
+        underlying = self._infer_underlying_from_instrument(instrument)
+        if underlying is None:
+            return True
+        raw_lot_size = lot_sizes.get(underlying)
+        try:
+            lot_size = int(raw_lot_size) if raw_lot_size is not None else 0
+        except (TypeError, ValueError):
+            lot_size = 0
+        if lot_size <= 0:
+            return True
+        if quantity % lot_size == 0:
+            return True
+        logger.warning(
+            "SKIP_ORDER lot mismatch instrument=%s quantity=%s lot_size=%s signal=%s",
+            instrument,
+            quantity,
+            lot_size,
+            signal_type.value,
+        )
+        return False
+
+    @staticmethod
+    def _infer_underlying_from_instrument(instrument: str) -> str | None:
+        symbol = instrument.strip().upper()
+        match = PaperExecutionEngine._OPTION_SYMBOL_PATTERN.match(symbol.replace("-", "_"))
+        if match is not None:
+            return str(match.group("underlying")).upper()
+        if "_" in symbol:
+            base = symbol.split("_", maxsplit=1)[0].strip()
+            if base:
+                return base.upper()
+        if symbol.startswith("NIFTY"):
+            return "NIFTY"
+        if symbol.startswith("BANKNIFTY"):
+            return "BANKNIFTY"
+        return None
+
+    def _remember_instrument_meta(self, *, instrument: str, order: dict[str, Any]) -> None:
+        existing = self._instrument_meta_by_instrument.get(instrument, {}).copy()
+        parsed = self._parse_option_meta_from_instrument(instrument)
+        if parsed:
+            existing.update(parsed)
+        expiry = self._serialize_expiry(order.get("expiry"))
+        if expiry is not None:
+            existing["expiry"] = expiry
+        strike = order.get("strike")
+        try:
+            if strike is not None:
+                existing["strike"] = float(strike)
+        except (TypeError, ValueError):
+            pass
+        option_type = self._resolve_option_type(order=order, instrument=instrument)
+        if option_type in {"CE", "PE"}:
+            existing["option_type"] = option_type
+        underlying = self._infer_underlying_from_instrument(instrument)
+        if underlying:
+            existing["underlying"] = underlying
+        if existing:
+            self._instrument_meta_by_instrument[instrument] = existing
+
+    @classmethod
+    def _parse_option_meta_from_instrument(cls, instrument: str) -> dict[str, Any]:
+        symbol = instrument.strip().upper().replace("-", "_")
+        match = cls._OPTION_SYMBOL_PATTERN.match(symbol)
+        if match is None:
+            return {}
+        expiry = pd.to_datetime(match.group("expiry"), format="%Y%m%d", errors="coerce")
+        expiry_str = pd.Timestamp(expiry).strftime("%Y-%m-%d") if not pd.isna(expiry) else None
+        out: dict[str, Any] = {
+            "underlying": str(match.group("underlying")).upper(),
+            "option_type": str(match.group("option_type")).upper(),
+        }
+        if expiry_str is not None:
+            out["expiry"] = expiry_str
+        with suppress(TypeError, ValueError):
+            out["strike"] = float(match.group("strike"))
+        return out
+
     def _apply_slippage(self, price: float, *, action: str) -> float:
         effective_bps = self.slippage_bps * max(float(self.slippage_multiplier), 0.0)
         slip = (effective_bps / 10_000.0) * price
         if action == "BUY":
             return price + slip
         return max(0.0, price - slip)
+
+    def _collect_expiry_settlement_fills(
+        self,
+        *,
+        market_data: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        ts = pd.to_datetime(market_data.get("timestamp", datetime.now()), errors="coerce")
+        if pd.isna(ts):
+            ts = pd.Timestamp(datetime.now())
+        now_date = ts.date()
+        fills: list[dict[str, Any]] = []
+        for instrument, qty in list(self._positions.items()):
+            if qty == 0:
+                continue
+            meta = self._instrument_meta_by_instrument.get(instrument, {})
+            if not meta:
+                self._remember_instrument_meta(instrument=instrument, order={})
+                meta = self._instrument_meta_by_instrument.get(instrument, {})
+            expiry_raw = meta.get("expiry")
+            option_type = str(meta.get("option_type", "")).upper()
+            if expiry_raw is None or option_type not in {"CE", "PE"}:
+                continue
+            expiry_ts = pd.to_datetime(expiry_raw, errors="coerce")
+            if pd.isna(expiry_ts) or now_date < expiry_ts.date():
+                continue
+            strike = float(meta.get("strike", 0.0) or 0.0)
+            if strike <= 0.0:
+                continue
+            settlement_price, settlement_reason = self._option_settlement_price(
+                market_data=market_data,
+                instrument=instrument,
+                option_type=option_type,
+                strike=strike,
+                underlying=str(meta.get("underlying", "")).upper(),
+            )
+            close_fill = self._close_fill_for_position(
+                instrument=instrument,
+                quantity=qty,
+                close_price=settlement_price,
+                signal_type=SignalType.EXIT.value,
+                strategy_name="expiry_settlement",
+                reason=settlement_reason,
+                timestamp=ts.to_pydatetime(),
+                apply_slippage=False,
+                fees=0.0,
+            )
+            close_fill["expiry"] = self._serialize_expiry(expiry_raw)
+            close_fill["strike"] = strike
+            close_fill["option_type"] = option_type
+            fills.append(close_fill)
+        return fills
+
+    def _option_settlement_price(
+        self,
+        *,
+        market_data: dict[str, Any],
+        instrument: str,
+        option_type: str,
+        strike: float,
+        underlying: str,
+    ) -> tuple[float, str]:
+        spot = 0.0
+        underlying_prices = market_data.get("underlying_prices")
+        if isinstance(underlying_prices, dict):
+            try:
+                spot = float(underlying_prices.get(underlying, 0.0) or 0.0)
+            except (TypeError, ValueError):
+                spot = 0.0
+        if spot <= 0.0:
+            symbol = str(market_data.get("symbol", "")).strip().upper()
+            if symbol == underlying:
+                try:
+                    spot = float(
+                        market_data.get("close_price", market_data.get("last_price", 0.0))
+                        or 0.0
+                    )
+                except (TypeError, ValueError):
+                    spot = 0.0
+        if spot <= 0.0:
+            logger.warning(
+                "EXPIRY_SETTLEMENT_SPOT_MISSING instrument=%s underlying=%s; settling at zero",
+                instrument,
+                underlying,
+            )
+        intrinsic = 0.0
+        if option_type == "CE":
+            intrinsic = max(0.0, spot - strike)
+        elif option_type == "PE":
+            intrinsic = max(0.0, strike - spot)
+        reason = (
+            "expiry_settlement_itm"
+            if intrinsic > 0.0
+            else "expiry_settlement_otm"
+        )
+        return float(intrinsic), reason
+
+    def _force_exit_all_positions(
+        self,
+        *,
+        market_data: dict[str, Any],
+        reason: str,
+    ) -> list[dict[str, Any]]:
+        ts = pd.to_datetime(market_data.get("timestamp", datetime.now()), errors="coerce")
+        if pd.isna(ts):
+            ts = pd.Timestamp(datetime.now())
+        fills: list[dict[str, Any]] = []
+        for instrument, qty in list(self._positions.items()):
+            if qty == 0:
+                continue
+            order = {
+                "symbol": instrument,
+                "action": "BUY" if qty < 0 else "SELL",
+                "quantity": abs(qty),
+            }
+            meta = self._instrument_meta_by_instrument.get(instrument, {})
+            for key in ("expiry", "strike", "option_type"):
+                if key in meta:
+                    order[key] = meta[key]
+            close_price = self._resolve_order_price(
+                order=order,
+                market_data=market_data,
+                signal_type=SignalType.EXIT,
+                action=str(order["action"]),
+            )
+            close_fill = self._close_fill_for_position(
+                instrument=instrument,
+                quantity=qty,
+                close_price=close_price,
+                signal_type=SignalType.EXIT.value,
+                strategy_name="watchdog",
+                reason=reason,
+                timestamp=ts.to_pydatetime(),
+            )
+            close_fill["expiry"] = self._serialize_expiry(order.get("expiry"))
+            close_fill["strike"] = order.get("strike")
+            close_fill["option_type"] = self._resolve_option_type(
+                order=order,
+                instrument=instrument,
+            )
+            fills.append(close_fill)
+        return fills
+
+    def _close_fill_for_position(
+        self,
+        *,
+        instrument: str,
+        quantity: int,
+        close_price: float,
+        signal_type: str,
+        strategy_name: str,
+        reason: str,
+        timestamp: datetime,
+        apply_slippage: bool = True,
+        fees: float | None = None,
+    ) -> dict[str, Any]:
+        action = "BUY" if quantity < 0 else "SELL"
+        absolute_qty = abs(int(quantity))
+        self._fill_seq += 1
+        filled_price = (
+            self._apply_slippage(float(close_price), action=action)
+            if apply_slippage
+            else float(close_price)
+        )
+        notional = abs(filled_price * absolute_qty)
+        resolved_fees = float(self.commission_per_order) if fees is None else float(fees)
+        self._apply_fill_accounting(
+            instrument=instrument,
+            side=action,
+            quantity=absolute_qty,
+            fill_price=filled_price,
+            fees=resolved_fees,
+        )
+        return {
+            "timestamp": timestamp,
+            "fill_id": f"PAPER-{self._fill_seq:08d}",
+            "trade_id": f"{strategy_name}:{pd.Timestamp(timestamp).strftime('%Y%m%dT%H%M%S')}",
+            "strategy_name": strategy_name,
+            "signal_type": signal_type,
+            "instrument": instrument,
+            "side": action,
+            "quantity": absolute_qty,
+            "price": float(filled_price),
+            "notional": float(notional),
+            "fees": resolved_fees,
+            "mid_price": float(close_price),
+            "slippage_applied": float(filled_price) - float(close_price),
+            "leg": "unknown",
+            "strike": None,
+            "expiry": None,
+            "option_type": self._resolve_option_type(order={}, instrument=instrument),
+            "reason": reason,
+            "regime": "",
+            "confidence": 0.0,
+        }
 
     def _refresh_mark_to_market(self, *, market_data: dict[str, Any]) -> None:
         instrument_prices = market_data.get("instrument_prices")

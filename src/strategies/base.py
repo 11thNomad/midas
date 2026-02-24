@@ -225,8 +225,16 @@ class BaseStrategy(ABC):
         fill_price: float,
         fill_quantity: int,
         timestamp: datetime,
+        *,
+        signal_type: SignalType | None = None,
     ) -> None:
         """Called when an order is filled. Update internal state."""
+        _ = order_id
+        _ = fill_price
+        _ = fill_quantity
+        _ = timestamp
+        if signal_type == SignalType.EXIT:
+            self.state.current_position = None
         self.state.trade_count += 1
 
     def on_exit(self) -> None:

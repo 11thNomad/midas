@@ -705,3 +705,233 @@ def test_paper_executor_uses_single_starting_base_for_all_balances(tmp_path):
     assert restarted._cash == pytest.approx(1_000.0, rel=1e-9)
     assert restarted._current_balance == pytest.approx(1_000.0, rel=1e-9)
     assert restarted._mtm_balance == pytest.approx(1_000.0, rel=1e-9)
+
+
+def test_paper_executor_exit_bypasses_circuit_breaker_block(tmp_path):
+    class _BreakerAlwaysBlocked:
+        @staticmethod
+        def can_trade() -> bool:
+            return False
+
+        @staticmethod
+        def update(**_kwargs) -> None:
+            return None
+
+    engine = PaperExecutionEngine(
+        base_dir=str(tmp_path / "cache"),
+        paper_log_dir=str(tmp_path / "paper"),
+        slippage_bps=0.0,
+        commission_per_order=0.0,
+        circuit_breaker=_BreakerAlwaysBlocked(),
+    )
+    engine._positions["NIFTY"] = -2
+    engine._avg_cost_by_instrument["NIFTY"] = 100.0
+    engine._last_price_by_instrument["NIFTY"] = 100.0
+
+    exit_signal = Signal(
+        signal_type=SignalType.EXIT,
+        strategy_name="dummy",
+        instrument="NIFTY",
+        timestamp=datetime(2026, 1, 2, 10, 0),
+        regime=RegimeState.LOW_VOL_RANGING,
+    )
+    fills = engine.execute_signals(
+        [exit_signal],
+        market_data={
+            "symbol": "NIFTY",
+            "timestamp": datetime(2026, 1, 2, 10, 0),
+            "last_price": 95.0,
+        },
+    )
+    assert len(fills) == 1
+    assert fills[0]["side"] == "BUY"
+    assert fills[0]["quantity"] == 2
+
+
+def test_paper_executor_option_exit_uses_side_aware_quote(tmp_path):
+    instrument = "NIFTY_20260108_22000CE"
+    engine = PaperExecutionEngine(
+        base_dir=str(tmp_path / "cache"),
+        paper_log_dir=str(tmp_path / "paper"),
+        slippage_bps=0.0,
+        commission_per_order=0.0,
+    )
+    entry_signal = Signal(
+        signal_type=SignalType.ENTRY_SHORT,
+        strategy_name="iron_condor",
+        instrument="NIFTY",
+        timestamp=datetime(2026, 1, 2, 9, 15),
+        orders=[
+            {
+                "symbol": instrument,
+                "action": "SELL",
+                "quantity": 50,
+                "price": 100.0,
+                "expiry": "2026-01-08",
+                "strike": 22000.0,
+                "option_type": "CE",
+            }
+        ],
+        regime=RegimeState.LOW_VOL_RANGING,
+        indicators={"call_wing": 100.0},
+    )
+    engine.execute_signals(
+        [entry_signal],
+        market_data={
+            "symbol": "NIFTY",
+            "timestamp": datetime(2026, 1, 2, 9, 15),
+            "last_price": 100.0,
+        },
+    )
+
+    exit_signal = Signal(
+        signal_type=SignalType.EXIT,
+        strategy_name="iron_condor",
+        instrument="NIFTY",
+        timestamp=datetime(2026, 1, 2, 10, 0),
+        orders=[{"symbol": instrument, "action": "BUY", "quantity": 50, "option_type": "CE"}],
+        regime=RegimeState.LOW_VOL_RANGING,
+    )
+    fills = engine.execute_signals(
+        [exit_signal],
+        market_data={
+            "symbol": "NIFTY",
+            "timestamp": datetime(2026, 1, 2, 10, 0),
+            "close_price": 22_000.0,
+            "option_quotes": {instrument: {"bid": 90.0, "ask": 111.0, "ltp": 95.0}},
+        },
+    )
+    assert len(fills) == 1
+    assert fills[0]["side"] == "BUY"
+    assert fills[0]["price"] == pytest.approx(111.0, rel=1e-9)
+
+
+def test_paper_executor_enforces_option_lot_size_guard(tmp_path):
+    engine = PaperExecutionEngine(
+        base_dir=str(tmp_path / "cache"),
+        paper_log_dir=str(tmp_path / "paper"),
+        slippage_bps=0.0,
+        commission_per_order=0.0,
+    )
+    signal = Signal(
+        signal_type=SignalType.ENTRY_SHORT,
+        strategy_name="iron_condor",
+        instrument="NIFTY",
+        timestamp=datetime(2026, 1, 2, 9, 15),
+        orders=[
+            {
+                "symbol": "NIFTY_20260108_22000CE",
+                "action": "SELL",
+                "quantity": 75,
+                "price": 100.0,
+                "option_type": "CE",
+            }
+        ],
+        regime=RegimeState.LOW_VOL_RANGING,
+        indicators={"call_wing": 100.0},
+    )
+    fills = engine.execute_signals(
+        [signal],
+        market_data={
+            "symbol": "NIFTY",
+            "timestamp": datetime(2026, 1, 2, 9, 15),
+            "last_price": 100.0,
+            "lot_size_by_underlying": {"NIFTY": 50},
+        },
+    )
+    assert fills == []
+
+
+def test_paper_executor_settles_expired_option_positions(tmp_path):
+    instrument = "NIFTY_20260108_22000CE"
+    engine = PaperExecutionEngine(
+        base_dir=str(tmp_path / "cache"),
+        paper_log_dir=str(tmp_path / "paper"),
+        slippage_bps=0.0,
+        commission_per_order=0.0,
+    )
+    entry_signal = Signal(
+        signal_type=SignalType.ENTRY_SHORT,
+        strategy_name="iron_condor",
+        instrument="NIFTY",
+        timestamp=datetime(2026, 1, 2, 9, 15),
+        orders=[
+            {
+                "symbol": instrument,
+                "action": "SELL",
+                "quantity": 50,
+                "price": 100.0,
+                "expiry": "2026-01-08",
+                "strike": 22000.0,
+                "option_type": "CE",
+            }
+        ],
+        regime=RegimeState.LOW_VOL_RANGING,
+        indicators={"call_wing": 100.0},
+    )
+    engine.execute_signals(
+        [entry_signal],
+        market_data={
+            "symbol": "NIFTY",
+            "timestamp": datetime(2026, 1, 2, 9, 15),
+            "last_price": 100.0,
+        },
+    )
+
+    fills = engine.execute_signals(
+        [],
+        market_data={
+            "symbol": "NIFTY",
+            "timestamp": datetime(2026, 1, 9, 15, 25),
+            "close_price": 22_150.0,
+            "underlying_prices": {"NIFTY": 22_150.0},
+        },
+    )
+    settlement_fills = [fill for fill in fills if fill.get("strategy_name") == "expiry_settlement"]
+    assert len(settlement_fills) == 1
+    settlement = settlement_fills[0]
+    assert settlement["side"] == "BUY"
+    assert settlement["price"] == pytest.approx(150.0, rel=1e-9)
+    assert settlement["reason"] == "expiry_settlement_itm"
+    assert engine._positions[instrument] == 0
+
+
+def test_paper_executor_watchdog_force_exit_closes_open_positions(tmp_path):
+    engine = PaperExecutionEngine(
+        base_dir=str(tmp_path / "cache"),
+        paper_log_dir=str(tmp_path / "paper"),
+        slippage_bps=0.0,
+        commission_per_order=0.0,
+    )
+    entry_signal = Signal(
+        signal_type=SignalType.ENTRY_LONG,
+        strategy_name="dummy",
+        instrument="NIFTY",
+        timestamp=datetime(2026, 1, 2, 9, 15),
+        orders=[{"symbol": "NIFTY", "action": "BUY", "quantity": 2, "price": 100.0}],
+        regime=RegimeState.LOW_VOL_RANGING,
+    )
+    engine.execute_signals(
+        [entry_signal],
+        market_data={
+            "symbol": "NIFTY",
+            "timestamp": datetime(2026, 1, 2, 9, 15),
+            "last_price": 100.0,
+        },
+    )
+
+    fills = engine.execute_signals(
+        [],
+        market_data={
+            "symbol": "NIFTY",
+            "timestamp": datetime(2026, 1, 7, 15, 25),
+            "close_price": 95.0,
+            "force_exit_all": True,
+            "force_exit_reason": "watchdog_wed_1525_force_exit",
+        },
+    )
+    watchdog_fills = [fill for fill in fills if fill.get("strategy_name") == "watchdog"]
+    assert len(watchdog_fills) == 1
+    assert watchdog_fills[0]["side"] == "SELL"
+    assert watchdog_fills[0]["reason"] == "watchdog_wed_1525_force_exit"
+    assert engine._positions["NIFTY"] == 0
