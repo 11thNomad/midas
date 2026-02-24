@@ -6,6 +6,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -30,6 +31,7 @@ class PaperExecutionEngine:
     paper_capital: float | None = None
     margin_buffer_pct: float = 15.0
     available_cash_resolver: Callable[[], float | None] | None = None
+    paper_log_dir: str = "data/paper_trading"
     circuit_breaker: CircuitBreaker | None = None
     _store: DataStore = field(init=False, repr=False)
     _fill_seq: int = field(default=0, init=False, repr=False)
@@ -40,12 +42,49 @@ class PaperExecutionEngine:
         default_factory=dict, init=False, repr=False
     )
     _realized_pnl_today: float = field(default=0.0, init=False, repr=False)
+    _gross_realized_pnl_today: float = field(default=0.0, init=False, repr=False)
+    _fees_paid_today: float = field(default=0.0, init=False, repr=False)
+    _entries_today: int = field(default=0, init=False, repr=False)
+    _exits_today: int = field(default=0, init=False, repr=False)
+    _paper_log_path: Path = field(init=False, repr=False)
+
+    _FILL_COLUMNS: tuple[str, ...] = (
+        "timestamp",
+        "trade_id",
+        "signal_type",
+        "instrument",
+        "leg",
+        "action",
+        "strike",
+        "expiry",
+        "quantity",
+        "fill_price",
+        "mid_price",
+        "slippage_applied",
+        "fees_estimated",
+        "regime",
+        "vix",
+        "adx",
+    )
+    _SUMMARY_COLUMNS: tuple[str, ...] = (
+        "date",
+        "entries",
+        "exits",
+        "open_positions",
+        "gross_pnl",
+        "fees",
+        "net_pnl",
+        "cash_balance",
+        "margin_utilisation_pct",
+    )
 
     def __post_init__(self) -> None:
         self._store = DataStore(base_dir=self.base_dir)
         self._cash = float(self.initial_capital)
         if self.paper_capital is None:
             self.paper_capital = float(self.initial_capital)
+        self._paper_log_path = Path(self.paper_log_dir)
+        self._paper_log_path.mkdir(parents=True, exist_ok=True)
 
     def execute_signals(
         self, signals: list[Signal], *, market_data: dict[str, Any] | None = None
@@ -53,6 +92,7 @@ class PaperExecutionEngine:
         """Execute actionable signals as immediate paper fills and persist events."""
         market_data = market_data or {}
         fills: list[dict[str, Any]] = []
+        executed_signals: list[Signal] = []
 
         for signal in signals:
             if not signal.is_actionable:
@@ -63,7 +103,14 @@ class PaperExecutionEngine:
                 signal, market_data=market_data
             ):
                 continue
-            fills.extend(self._fills_for_signal(signal, market_data=market_data))
+            signal_fills = self._fills_for_signal(signal, market_data=market_data)
+            if signal_fills:
+                executed_signals.append(signal)
+                if signal.signal_type in (SignalType.ENTRY_LONG, SignalType.ENTRY_SHORT):
+                    self._entries_today += 1
+                elif signal.signal_type == SignalType.EXIT:
+                    self._exits_today += 1
+            fills.extend(signal_fills)
 
         if fills:
             frame = pd.DataFrame(fills)
@@ -89,6 +136,7 @@ class PaperExecutionEngine:
                 open_positions=open_positions,
             )
 
+        self._write_csv_logs(fills=fills, signals=executed_signals, market_data=market_data)
         return fills
 
     def _can_enter_short(self, signal: Signal, *, market_data: dict[str, Any]) -> bool:
@@ -181,10 +229,17 @@ class PaperExecutionEngine:
                 order.get("action", self._default_action(signal, symbol=instrument))
             ).upper()
             filled_price = self._apply_slippage(raw_price, action=action)
+            option_type = self._resolve_option_type(order=order, instrument=instrument)
+            leg = self._resolve_leg_label(
+                signal_type=signal.signal_type.value,
+                action=action,
+                option_type=option_type,
+            )
             quantity = int(order.get("quantity", 1) or 1)
 
             notional = abs(filled_price * quantity)
             fees = float(self.commission_per_order)
+            slippage_applied = float(filled_price) - float(raw_price)
             out.append(
                 {
                     "timestamp": ts,
@@ -197,6 +252,12 @@ class PaperExecutionEngine:
                     "price": float(filled_price),
                     "notional": float(notional),
                     "fees": fees,
+                    "mid_price": float(raw_price),
+                    "slippage_applied": float(slippage_applied),
+                    "leg": leg,
+                    "strike": order.get("strike"),
+                    "expiry": order.get("expiry"),
+                    "option_type": option_type,
                     "reason": signal.reason,
                     "regime": signal.regime.value,
                     "confidence": float(signal.confidence),
@@ -208,6 +269,8 @@ class PaperExecutionEngine:
                 quantity=quantity,
                 fill_price=filled_price,
             )
+            self._gross_realized_pnl_today += realized_delta
+            self._fees_paid_today += fees
             self._realized_pnl_today += realized_delta - fees
             if action == "BUY":
                 self._cash -= notional + fees
@@ -217,6 +280,169 @@ class PaperExecutionEngine:
             # TODO: Wire strategy state updates (on_fill)
             # once runtime tracks strategy instances per signal.
         return out
+
+    def _write_csv_logs(
+        self,
+        *,
+        fills: list[dict[str, Any]],
+        signals: list[Signal],
+        market_data: dict[str, Any],
+    ) -> None:
+        self._write_fills_csv(fills=fills, signals=signals, market_data=market_data)
+        self._write_daily_summary_csv(market_data=market_data)
+
+    def _write_fills_csv(
+        self,
+        *,
+        fills: list[dict[str, Any]],
+        signals: list[Signal],
+        market_data: dict[str, Any],
+    ) -> None:
+        if not fills:
+            return
+        signal_by_ts = {pd.Timestamp(signal.timestamp): signal for signal in signals}
+        rows: list[dict[str, Any]] = []
+        for fill in fills:
+            ts = pd.Timestamp(fill.get("timestamp"))
+            signal = signal_by_ts.get(ts)
+            if signal is None:
+                continue
+            trade_id = self._resolve_trade_id(signal)
+            rows.append(
+                {
+                    "timestamp": ts.isoformat(),
+                    "trade_id": trade_id,
+                    "signal_type": signal.signal_type.value,
+                    "instrument": str(fill.get("instrument", signal.instrument)),
+                    "leg": str(fill.get("leg", "unknown")),
+                    "action": str(fill.get("side", "")).upper(),
+                    "strike": fill.get("strike"),
+                    "expiry": self._serialize_expiry(fill.get("expiry")),
+                    "quantity": int(fill.get("quantity", 0) or 0),
+                    "fill_price": float(fill.get("price", 0.0) or 0.0),
+                    "mid_price": float(fill.get("mid_price", 0.0) or 0.0),
+                    "slippage_applied": float(fill.get("slippage_applied", 0.0) or 0.0),
+                    "fees_estimated": float(fill.get("fees", 0.0) or 0.0),
+                    "regime": signal.regime.value,
+                    "vix": self._as_float(market_data.get("vix")),
+                    "adx": self._as_float(market_data.get("adx")),
+                }
+            )
+        if not rows:
+            return
+        frame = pd.DataFrame(rows, columns=list(self._FILL_COLUMNS))
+        by_day = frame.groupby(pd.to_datetime(frame["timestamp"]).dt.strftime("%Y%m%d"), sort=True)
+        for day_key, subset in by_day:
+            path = self._paper_log_path / f"fills_{day_key}.csv"
+            subset.to_csv(path, index=False, mode="a", header=not path.exists())
+
+    def _write_daily_summary_csv(self, *, market_data: dict[str, Any]) -> None:
+        ts = pd.to_datetime(
+            market_data.get("timestamp", datetime.now()),
+            errors="coerce",
+        )
+        if pd.isna(ts):
+            ts = pd.Timestamp(datetime.now())
+        day_key = ts.strftime("%Y%m%d")
+        open_positions = sum(1 for _, qty in self._positions.items() if qty != 0)
+        gross_pnl = float(self._gross_realized_pnl_today)
+        fees = float(self._fees_paid_today)
+        net_pnl = float(self._realized_pnl_today)
+        summary_row = {
+            "date": ts.strftime("%Y-%m-%d"),
+            "entries": int(self._entries_today),
+            "exits": int(self._exits_today),
+            "open_positions": int(open_positions),
+            "gross_pnl": gross_pnl,
+            "fees": fees,
+            "net_pnl": net_pnl,
+            "cash_balance": float(self._cash),
+            "margin_utilisation_pct": self._estimate_margin_utilisation_pct(),
+        }
+        summary_path = self._paper_log_path / f"daily_summary_{day_key}.csv"
+        pd.DataFrame([summary_row], columns=list(self._SUMMARY_COLUMNS)).to_csv(
+            summary_path,
+            index=False,
+        )
+
+    @staticmethod
+    def _resolve_option_type(*, order: dict[str, Any], instrument: str) -> str | None:
+        raw = order.get("option_type")
+        if raw is not None:
+            opt = str(raw).strip().upper()
+            if opt in {"CE", "PE"}:
+                return opt
+        symbol = instrument.strip().upper()
+        if symbol.endswith("CE"):
+            return "CE"
+        if symbol.endswith("PE"):
+            return "PE"
+        return None
+
+    @staticmethod
+    def _resolve_leg_label(*, signal_type: str, action: str, option_type: str | None) -> str:
+        opt = (option_type or "").upper()
+        side = action.upper()
+        st = signal_type.lower()
+        if st == SignalType.ENTRY_SHORT.value:
+            if opt == "CE" and side == "SELL":
+                return "call_short"
+            if opt == "PE" and side == "SELL":
+                return "put_short"
+            if opt == "CE" and side == "BUY":
+                return "call_hedge"
+            if opt == "PE" and side == "BUY":
+                return "put_hedge"
+        if st == SignalType.EXIT.value:
+            if opt == "CE" and side == "BUY":
+                return "call_short"
+            if opt == "PE" and side == "BUY":
+                return "put_short"
+            if opt == "CE" and side == "SELL":
+                return "call_hedge"
+            if opt == "PE" and side == "SELL":
+                return "put_hedge"
+        return "unknown"
+
+    @staticmethod
+    def _serialize_expiry(value: Any) -> str | None:
+        if value is None:
+            return None
+        expiry = pd.to_datetime(value, errors="coerce")
+        if pd.isna(expiry):
+            return str(value)
+        return pd.Timestamp(expiry).strftime("%Y-%m-%d")
+
+    @staticmethod
+    def _as_float(value: Any) -> float | None:
+        try:
+            if value is None:
+                return None
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _resolve_trade_id(self, signal: Signal) -> str:
+        indicators = signal.indicators if isinstance(signal.indicators, dict) else {}
+        for key in ("trade_id", "position_id"):
+            value = indicators.get(key)
+            if value is not None and str(value).strip():
+                return str(value)
+        ts = pd.Timestamp(signal.timestamp).strftime("%Y%m%dT%H%M%S")
+        return f"{signal.strategy_name}:{signal.instrument}:{ts}"
+
+    def _estimate_margin_utilisation_pct(self) -> float:
+        capital = float(self.paper_capital or self.initial_capital)
+        if capital <= 0.0:
+            return 0.0
+        gross_notional = 0.0
+        for instrument, qty in self._positions.items():
+            if qty == 0:
+                continue
+            price = float(self._last_price_by_instrument.get(instrument, 0.0) or 0.0)
+            gross_notional += abs(float(qty) * price)
+        margin_estimate = gross_notional * 0.06
+        return (margin_estimate / capital) * 100.0
 
     def _default_order(self, signal: Signal) -> dict[str, Any]:
         symbol = signal.instrument

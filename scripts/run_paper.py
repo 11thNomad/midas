@@ -688,6 +688,7 @@ def main() -> int:
                 market_data={
                     "timestamp": loop_ts,
                     "vix": vix_value,
+                    "adx": float(regime_signals.adx_14),
                     "symbol": args.symbol,
                     "close_price": underlying_price,
                 },

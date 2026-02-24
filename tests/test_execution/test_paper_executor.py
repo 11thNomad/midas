@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
+import pandas as pd
 import pytest
 
 from src.execution.paper_executor import PaperExecutionEngine
@@ -10,7 +11,10 @@ from src.strategies.base import RegimeState, Signal, SignalType
 
 def test_paper_executor_executes_actionable_signal_and_persists(tmp_path):
     engine = PaperExecutionEngine(
-        base_dir=str(tmp_path / "cache"), slippage_bps=5.0, commission_per_order=20.0
+        base_dir=str(tmp_path / "cache"),
+        paper_log_dir=str(tmp_path / "paper"),
+        slippage_bps=5.0,
+        commission_per_order=20.0,
     )
     signals = [
         Signal(
@@ -35,7 +39,10 @@ def test_paper_executor_executes_actionable_signal_and_persists(tmp_path):
 
 
 def test_paper_executor_skips_no_signal(tmp_path):
-    engine = PaperExecutionEngine(base_dir=str(tmp_path / "cache"))
+    engine = PaperExecutionEngine(
+        base_dir=str(tmp_path / "cache"),
+        paper_log_dir=str(tmp_path / "paper"),
+    )
     signals = [
         Signal(
             signal_type=SignalType.NO_SIGNAL,
@@ -51,7 +58,10 @@ def test_paper_executor_skips_no_signal(tmp_path):
 
 def test_paper_executor_infers_buy_to_cover_for_short_exit(tmp_path):
     engine = PaperExecutionEngine(
-        base_dir=str(tmp_path / "cache"), slippage_bps=0.0, commission_per_order=0.0
+        base_dir=str(tmp_path / "cache"),
+        paper_log_dir=str(tmp_path / "paper"),
+        slippage_bps=0.0,
+        commission_per_order=0.0,
     )
     entry = Signal(
         signal_type=SignalType.ENTRY_SHORT,
@@ -79,7 +89,10 @@ def test_paper_executor_infers_buy_to_cover_for_short_exit(tmp_path):
 
 def test_paper_executor_infers_exit_quantity_from_open_position(tmp_path):
     engine = PaperExecutionEngine(
-        base_dir=str(tmp_path / "cache"), slippage_bps=0.0, commission_per_order=0.0
+        base_dir=str(tmp_path / "cache"),
+        paper_log_dir=str(tmp_path / "paper"),
+        slippage_bps=0.0,
+        commission_per_order=0.0,
     )
     entry = Signal(
         signal_type=SignalType.ENTRY_LONG,
@@ -107,6 +120,7 @@ def test_paper_executor_infers_exit_quantity_from_open_position(tmp_path):
 def test_paper_executor_aborts_entry_short_on_insufficient_margin(tmp_path):
     engine = PaperExecutionEngine(
         base_dir=str(tmp_path / "cache"),
+        paper_log_dir=str(tmp_path / "paper"),
         slippage_bps=0.0,
         commission_per_order=0.0,
         paper_capital=100.0,
@@ -128,6 +142,7 @@ def test_paper_executor_aborts_entry_short_on_insufficient_margin(tmp_path):
 def test_paper_executor_uses_resolver_before_paper_capital(tmp_path):
     engine = PaperExecutionEngine(
         base_dir=str(tmp_path / "cache"),
+        paper_log_dir=str(tmp_path / "paper"),
         slippage_bps=0.0,
         commission_per_order=0.0,
         paper_capital=500_000.0,
@@ -150,6 +165,7 @@ def test_paper_executor_uses_resolver_before_paper_capital(tmp_path):
 def test_paper_executor_applies_slippage_multiplier_to_buy_and_sell(tmp_path):
     engine = PaperExecutionEngine(
         base_dir=str(tmp_path / "cache"),
+        paper_log_dir=str(tmp_path / "paper"),
         slippage_bps=5.0,  # 0.05%
         slippage_multiplier=1.5,  # effective 0.075%
         commission_per_order=0.0,
@@ -184,3 +200,90 @@ def test_paper_executor_applies_slippage_multiplier_to_buy_and_sell(tmp_path):
 
     assert buy_fills[0]["price"] == pytest.approx(100.075, rel=1e-9)
     assert sell_fills[0]["price"] == pytest.approx(99.925, rel=1e-9)
+
+
+def test_paper_executor_writes_daily_fill_and_summary_csv(tmp_path):
+    log_dir = tmp_path / "paper"
+    engine = PaperExecutionEngine(
+        base_dir=str(tmp_path / "cache"),
+        paper_log_dir=str(log_dir),
+        slippage_bps=5.0,
+        slippage_multiplier=1.5,
+        commission_per_order=10.0,
+        paper_capital=200_000.0,
+    )
+    signal = Signal(
+        signal_type=SignalType.ENTRY_SHORT,
+        strategy_name="iron_condor",
+        instrument="NIFTY",
+        timestamp=datetime(2026, 1, 2, 9, 15),
+        orders=[
+            {
+                "symbol": "NIFTY_20260108_22000CE",
+                "action": "SELL",
+                "quantity": 75,
+                "price": 100.0,
+                "strike": 22000.0,
+                "expiry": "2026-01-08",
+                "option_type": "CE",
+            }
+        ],
+        regime=RegimeState.LOW_VOL_RANGING,
+        indicators={"call_wing": 100.0},
+    )
+    engine.execute_signals(
+        [signal],
+        market_data={
+            "timestamp": datetime(2026, 1, 2, 9, 15),
+            "symbol": "NIFTY",
+            "close_price": 22000.0,
+            "vix": 14.0,
+            "adx": 22.0,
+        },
+    )
+
+    fills_path = log_dir / "fills_20260102.csv"
+    summary_path = log_dir / "daily_summary_20260102.csv"
+    assert fills_path.exists()
+    assert summary_path.exists()
+
+    fills = pd.read_csv(fills_path)
+    summary = pd.read_csv(summary_path)
+    assert set(
+        [
+            "timestamp",
+            "trade_id",
+            "signal_type",
+            "instrument",
+            "leg",
+            "action",
+            "strike",
+            "expiry",
+            "quantity",
+            "fill_price",
+            "mid_price",
+            "slippage_applied",
+            "fees_estimated",
+            "regime",
+            "vix",
+            "adx",
+        ]
+    ).issubset(set(fills.columns))
+    assert fills.loc[0, "leg"] == "call_short"
+    assert fills.loc[0, "action"] == "SELL"
+    assert float(fills.loc[0, "slippage_applied"]) < 0.0
+
+    assert set(
+        [
+            "date",
+            "entries",
+            "exits",
+            "open_positions",
+            "gross_pnl",
+            "fees",
+            "net_pnl",
+            "cash_balance",
+            "margin_utilisation_pct",
+        ]
+    ).issubset(set(summary.columns))
+    assert int(summary.loc[0, "entries"]) == 1
