@@ -58,7 +58,9 @@ class PaperExecutionEngine:
                 continue
             if self.circuit_breaker is not None and not self.circuit_breaker.can_trade():
                 continue
-            if signal.signal_type == SignalType.ENTRY_SHORT and not self._can_enter_short(signal):
+            if signal.signal_type == SignalType.ENTRY_SHORT and not self._can_enter_short(
+                signal, market_data=market_data
+            ):
                 continue
             fills.extend(self._fills_for_signal(signal, market_data=market_data))
 
@@ -88,8 +90,8 @@ class PaperExecutionEngine:
 
         return fills
 
-    def _can_enter_short(self, signal: Signal) -> bool:
-        required_margin = self._estimate_required_margin(signal)
+    def _can_enter_short(self, signal: Signal, *, market_data: dict[str, Any]) -> bool:
+        required_margin = self._estimate_required_margin(signal, market_data=market_data)
         required_with_buffer = required_margin * (1.0 + (self.margin_buffer_pct / 100.0))
         available_cash, cash_source = self._resolve_available_cash()
         if available_cash >= required_with_buffer:
@@ -102,7 +104,7 @@ class PaperExecutionEngine:
         )
         return False
 
-    def _estimate_required_margin(self, signal: Signal) -> float:
+    def _estimate_required_margin(self, signal: Signal, *, market_data: dict[str, Any]) -> float:
         indicators = signal.indicators if isinstance(signal.indicators, dict) else {}
         wing_width = float(
             indicators.get("call_wing")
@@ -111,8 +113,32 @@ class PaperExecutionEngine:
             or 100.0
         )
         orders = signal.orders or []
-        lot_size = max((int(order.get("quantity", 1) or 1) for order in orders), default=1)
-        return wing_width * float(lot_size) * 1.5
+        quantity_units = max((int(order.get("quantity", 1) or 1) for order in orders), default=1)
+        spot = self._resolve_spot(signal=signal, market_data=market_data)
+        wing_based = wing_width * float(quantity_units) * 1.5
+        notional_based = float(quantity_units) * spot * 0.06 if spot > 0.0 else 0.0
+        minimum_floor = 100_000.0
+        return max(wing_based, notional_based, minimum_floor)
+
+    @staticmethod
+    def _resolve_spot(*, signal: Signal, market_data: dict[str, Any]) -> float:
+        indicators = signal.indicators if isinstance(signal.indicators, dict) else {}
+        candidates = (
+            indicators.get("spot"),
+            indicators.get("underlying_price"),
+            market_data.get("close_price"),
+            market_data.get("last_price"),
+        )
+        for value in candidates:
+            try:
+                if value is None:
+                    continue
+                parsed = float(value)
+                if parsed > 0.0:
+                    return parsed
+            except (TypeError, ValueError):
+                continue
+        return 0.0
 
     def _resolve_available_cash(self) -> tuple[float, str]:
         if self.available_cash_resolver is not None:

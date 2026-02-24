@@ -93,7 +93,7 @@ risk:
 
 # === Paper Trading ===
 paper_trading:
-  paper_capital: 150000
+  paper_capital: 200000
   margin_buffer_pct: 15
 
 # === Strategies ===
