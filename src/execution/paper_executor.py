@@ -47,6 +47,7 @@ class PaperExecutionEngine:
     _entries_today: int = field(default=0, init=False, repr=False)
     _exits_today: int = field(default=0, init=False, repr=False)
     _paper_log_path: Path = field(init=False, repr=False)
+    _summary_day_key: str | None = field(default=None, init=False, repr=False)
 
     _FILL_COLUMNS: tuple[str, ...] = (
         "timestamp",
@@ -91,6 +92,7 @@ class PaperExecutionEngine:
     ) -> list[dict[str, Any]]:
         """Execute actionable signals as immediate paper fills and persist events."""
         market_data = market_data or {}
+        self._roll_daily_counters_if_needed(market_data=market_data)
         fills: list[dict[str, Any]] = []
         executed_signals: list[Signal] = []
 
@@ -219,6 +221,7 @@ class PaperExecutionEngine:
     ) -> list[dict[str, Any]]:
         orders = signal.orders or [self._default_order(signal)]
         ts = signal.timestamp
+        trade_id = self._resolve_trade_id(signal)
 
         out: list[dict[str, Any]] = []
         for order in orders:
@@ -244,6 +247,7 @@ class PaperExecutionEngine:
                 {
                     "timestamp": ts,
                     "fill_id": f"PAPER-{self._fill_seq:08d}",
+                    "trade_id": trade_id,
                     "strategy_name": signal.strategy_name,
                     "signal_type": signal.signal_type.value,
                     "instrument": instrument,
@@ -300,20 +304,21 @@ class PaperExecutionEngine:
     ) -> None:
         if not fills:
             return
-        signal_by_ts = {pd.Timestamp(signal.timestamp): signal for signal in signals}
+        _ = signals  # consumed at source via per-fill metadata
         rows: list[dict[str, Any]] = []
         for fill in fills:
             ts = pd.Timestamp(fill.get("timestamp"))
-            signal = signal_by_ts.get(ts)
-            if signal is None:
-                continue
-            trade_id = self._resolve_trade_id(signal)
+            signal_type = str(fill.get("signal_type", "")).strip().lower()
+            instrument = str(fill.get("instrument", "")).strip()
+            trade_id = str(fill.get("trade_id", "")).strip()
+            if not trade_id:
+                trade_id = self._default_trade_id_from_fill(fill)
             rows.append(
                 {
                     "timestamp": ts.isoformat(),
                     "trade_id": trade_id,
-                    "signal_type": signal.signal_type.value,
-                    "instrument": str(fill.get("instrument", signal.instrument)),
+                    "signal_type": signal_type,
+                    "instrument": instrument,
                     "leg": str(fill.get("leg", "unknown")),
                     "action": str(fill.get("side", "")).upper(),
                     "strike": fill.get("strike"),
@@ -323,7 +328,7 @@ class PaperExecutionEngine:
                     "mid_price": float(fill.get("mid_price", 0.0) or 0.0),
                     "slippage_applied": float(fill.get("slippage_applied", 0.0) or 0.0),
                     "fees_estimated": float(fill.get("fees", 0.0) or 0.0),
-                    "regime": signal.regime.value,
+                    "regime": str(fill.get("regime", "")),
                     "vix": self._as_float(market_data.get("vix")),
                     "adx": self._as_float(market_data.get("adx")),
                 }
@@ -364,6 +369,26 @@ class PaperExecutionEngine:
             summary_path,
             index=False,
         )
+
+    def _roll_daily_counters_if_needed(self, *, market_data: dict[str, Any]) -> None:
+        ts = pd.to_datetime(
+            market_data.get("timestamp", datetime.now()),
+            errors="coerce",
+        )
+        if pd.isna(ts):
+            ts = pd.Timestamp(datetime.now())
+        day_key = ts.strftime("%Y%m%d")
+        if self._summary_day_key is None:
+            self._summary_day_key = day_key
+            return
+        if day_key == self._summary_day_key:
+            return
+        self._summary_day_key = day_key
+        self._entries_today = 0
+        self._exits_today = 0
+        self._gross_realized_pnl_today = 0.0
+        self._fees_paid_today = 0.0
+        self._realized_pnl_today = 0.0
 
     @staticmethod
     def _resolve_option_type(*, order: dict[str, Any], instrument: str) -> str | None:
@@ -430,6 +455,13 @@ class PaperExecutionEngine:
                 return str(value)
         ts = pd.Timestamp(signal.timestamp).strftime("%Y%m%dT%H%M%S")
         return f"{signal.strategy_name}:{signal.instrument}:{ts}"
+
+    @staticmethod
+    def _default_trade_id_from_fill(fill: dict[str, Any]) -> str:
+        ts = pd.Timestamp(fill.get("timestamp")).strftime("%Y%m%dT%H%M%S")
+        strategy = str(fill.get("strategy_name", "strategy")).strip() or "strategy"
+        instrument = str(fill.get("instrument", "instrument")).strip() or "instrument"
+        return f"{strategy}:{instrument}:{ts}"
 
     def _estimate_margin_utilisation_pct(self) -> float:
         capital = float(self.paper_capital or self.initial_capital)

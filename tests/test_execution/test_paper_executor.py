@@ -287,3 +287,113 @@ def test_paper_executor_writes_daily_fill_and_summary_csv(tmp_path):
         ]
     ).issubset(set(summary.columns))
     assert int(summary.loc[0, "entries"]) == 1
+
+
+def test_paper_executor_daily_counters_reset_on_day_change(tmp_path):
+    log_dir = tmp_path / "paper"
+    engine = PaperExecutionEngine(
+        base_dir=str(tmp_path / "cache"),
+        paper_log_dir=str(log_dir),
+        slippage_bps=0.0,
+        commission_per_order=0.0,
+        paper_capital=200_000.0,
+    )
+    signal_day1 = Signal(
+        signal_type=SignalType.ENTRY_SHORT,
+        strategy_name="iron_condor",
+        instrument="NIFTY",
+        timestamp=datetime(2026, 1, 2, 9, 15),
+        orders=[
+            {
+                "symbol": "NIFTY_20260108_22000CE",
+                "action": "SELL",
+                "quantity": 75,
+                "price": 100.0,
+            }
+        ],
+        regime=RegimeState.LOW_VOL_RANGING,
+        indicators={"call_wing": 100.0},
+    )
+    engine.execute_signals(
+        [signal_day1],
+        market_data={
+            "timestamp": datetime(2026, 1, 2, 9, 15),
+            "symbol": "NIFTY",
+            "close_price": 22000.0,
+        },
+    )
+
+    signal_day2 = Signal(
+        signal_type=SignalType.ENTRY_SHORT,
+        strategy_name="iron_condor",
+        instrument="NIFTY",
+        timestamp=datetime(2026, 1, 3, 9, 15),
+        orders=[
+            {
+                "symbol": "NIFTY_20260115_22000CE",
+                "action": "SELL",
+                "quantity": 75,
+                "price": 100.0,
+            }
+        ],
+        regime=RegimeState.LOW_VOL_RANGING,
+        indicators={"call_wing": 100.0},
+    )
+    engine.execute_signals(
+        [signal_day2],
+        market_data={
+            "timestamp": datetime(2026, 1, 3, 9, 15),
+            "symbol": "NIFTY",
+            "close_price": 22000.0,
+        },
+    )
+
+    day1_summary = pd.read_csv(log_dir / "daily_summary_20260102.csv")
+    day2_summary = pd.read_csv(log_dir / "daily_summary_20260103.csv")
+    assert int(day1_summary.loc[0, "entries"]) == 1
+    assert int(day2_summary.loc[0, "entries"]) == 1
+
+
+def test_paper_executor_fill_logging_handles_same_timestamp_signals(tmp_path):
+    log_dir = tmp_path / "paper"
+    engine = PaperExecutionEngine(
+        base_dir=str(tmp_path / "cache"),
+        paper_log_dir=str(log_dir),
+        slippage_bps=0.0,
+        commission_per_order=0.0,
+        paper_capital=200_000.0,
+    )
+    ts = datetime(2026, 1, 2, 9, 15)
+    entry_signal = Signal(
+        signal_type=SignalType.ENTRY_SHORT,
+        strategy_name="iron_condor",
+        instrument="NIFTY",
+        timestamp=ts,
+        orders=[
+            {"symbol": "NIFTY_20260108_22000CE", "action": "SELL", "quantity": 75, "price": 100.0},
+            {"symbol": "NIFTY_20260108_21900PE", "action": "SELL", "quantity": 75, "price": 100.0},
+            {"symbol": "NIFTY_20260108_22100CE", "action": "BUY", "quantity": 75, "price": 10.0},
+            {"symbol": "NIFTY_20260108_21800PE", "action": "BUY", "quantity": 75, "price": 10.0},
+        ],
+        regime=RegimeState.LOW_VOL_RANGING,
+        indicators={"call_wing": 100.0},
+    )
+    exit_signal = Signal(
+        signal_type=SignalType.EXIT,
+        strategy_name="iron_condor",
+        instrument="NIFTY",
+        timestamp=ts,
+        orders=[
+            {"symbol": "NIFTY_20260108_22000CE", "action": "BUY", "quantity": 75, "price": 101.0},
+            {"symbol": "NIFTY_20260108_21900PE", "action": "BUY", "quantity": 75, "price": 101.0},
+        ],
+        regime=RegimeState.LOW_VOL_RANGING,
+    )
+    engine.execute_signals(
+        [entry_signal, exit_signal],
+        market_data={"timestamp": ts, "symbol": "NIFTY", "close_price": 22000.0},
+    )
+
+    fills = pd.read_csv(log_dir / "fills_20260102.csv")
+    assert len(fills) == 6
+    assert set(fills["signal_type"].str.lower()) == {"entry_short", "exit"}
