@@ -28,6 +28,7 @@ def write_backtest_report(
     signal_snapshots_path = out_dir / f"{run_name}_signal_snapshots.csv"
     option_features_path = out_dir / f"{run_name}_option_features.csv"
     decisions_path = out_dir / f"{run_name}_decisions.csv"
+    mtm_path_path = out_dir / f"{run_name}_mtm_path.csv"
     html_path = out_dir / f"{run_name}_report.html"
 
     metrics_path.write_text(json.dumps(result.metrics, indent=2, sort_keys=True))
@@ -40,6 +41,7 @@ def write_backtest_report(
         option_features_path,
     )
     _write_csv(result.decisions, decisions_path)
+    _write_csv(result.mtm_path, mtm_path_path)
     html_path.write_text(_render_html(result.metrics))
 
     return {
@@ -50,6 +52,7 @@ def write_backtest_report(
         "signal_snapshots_csv": str(signal_snapshots_path),
         "option_features_csv": str(option_features_path),
         "decisions_csv": str(decisions_path),
+        "mtm_path_csv": str(mtm_path_path),
         "html_report": str(html_path),
     }
 

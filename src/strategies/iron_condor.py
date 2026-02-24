@@ -266,6 +266,7 @@ class IronCondorStrategy(BaseStrategy):
             "entry_credit": entry_credit,
             "entry_dte": entry_dte,
             "entry_selection": selection,
+            "mtm_path": [],
         }
         return Signal(
             signal_type=SignalType.ENTRY_SHORT,
@@ -324,6 +325,15 @@ class IronCondorStrategy(BaseStrategy):
         current_profit_pct = ((entry_credit - close_debit) / entry_credit) * 100.0
         current_date = ts.date()
         current_weekday = ts.weekday()
+        mtm_path = self.state.current_position.setdefault("mtm_path", [])
+        if isinstance(mtm_path, list):
+            mtm_path.append(
+                {
+                    "bar_date": str(current_date),
+                    "current_profit_pct": round(float(current_profit_pct), 4),
+                    "close_debit": round(float(close_debit), 2),
+                }
+            )
 
         reason = None
         indicators: dict[str, Any] = {
@@ -368,6 +378,17 @@ class IronCondorStrategy(BaseStrategy):
 
         if reason is None:
             return None
+
+        mtm = self.state.current_position.get("mtm_path", [])
+        pcts = [
+            float(bar.get("current_profit_pct"))
+            for bar in mtm
+            if isinstance(bar, dict) and bar.get("current_profit_pct") is not None
+        ]
+        indicators["min_intrahold_profit_pct"] = min(pcts) if pcts else None
+        indicators["max_intrahold_profit_pct"] = max(pcts) if pcts else None
+        indicators["first_bar_profit_pct"] = pcts[0] if pcts else None
+        indicators["hold_bars"] = len(pcts)
 
         return Signal(
             signal_type=SignalType.EXIT,

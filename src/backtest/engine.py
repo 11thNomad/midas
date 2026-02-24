@@ -32,6 +32,7 @@ class BacktestResult:
     metrics: dict[str, Any]
     signal_snapshots: pd.DataFrame = field(default_factory=pd.DataFrame)
     decisions: pd.DataFrame = field(default_factory=pd.DataFrame)
+    mtm_path: pd.DataFrame = field(default_factory=pd.DataFrame)
 
 
 @dataclass
@@ -71,6 +72,7 @@ class BacktestEngine:
                 regimes=empty,
                 signal_snapshots=empty,
                 decisions=empty,
+                mtm_path=empty,
                 metrics=summarize_backtest(
                     equity_curve=empty,
                     fills=empty,
@@ -109,6 +111,7 @@ class BacktestEngine:
         regime_rows: list[dict[str, Any]] = []
         signal_snapshot_rows: list[SignalSnapshotDTO] = []
         decision_rows: list[dict[str, Any]] = []
+        mtm_path_rows: list[dict[str, Any]] = []
         # Exit counters are event-level (one per exit signal), not per leg/fill.
         exit_attempted_count = 0
         exit_filled_count = 0
@@ -295,6 +298,11 @@ class BacktestEngine:
                     last_price_by_instrument[instrument] = fill_price
                     fill_rows.append(fill)
                 if signal.signal_type == SignalType.EXIT:
+                    mtm_path_rows.extend(
+                        self._mtm_rows_from_position(self.strategy.state.current_position)
+                    )
+                    if isinstance(self.strategy.state.current_position, dict):
+                        self.strategy.state.current_position["mtm_path"] = []
                     self.strategy.state.current_position = None
 
             equity = self._mark_to_market(
@@ -364,6 +372,9 @@ class BacktestEngine:
                         cash += notional - fees
                     last_price_by_instrument[instrument] = fill_price
                     fill_rows.append(fill)
+                mtm_path_rows.extend(self._mtm_rows_from_position(self.strategy.state.current_position))
+                if isinstance(self.strategy.state.current_position, dict):
+                    self.strategy.state.current_position["mtm_path"] = []
                 self.strategy.state.current_position = None
                 decision_rows.append(
                     {
@@ -438,6 +449,7 @@ class BacktestEngine:
         regimes_df = pd.DataFrame(regime_rows)
         signal_snapshots_df = frame_from_signal_snapshots(signal_snapshot_rows)
         decisions_df = pd.DataFrame(decision_rows)
+        mtm_path_df = pd.DataFrame(mtm_path_rows)
         decisions_df = self._annotate_early_exit_opportunities(
             decisions_df=decisions_df,
             fills=fills_df,
@@ -472,6 +484,7 @@ class BacktestEngine:
             regimes=regimes_df,
             signal_snapshots=signal_snapshots_df,
             decisions=decisions_df,
+            mtm_path=mtm_path_df,
             metrics=metrics,
         )
 
@@ -890,6 +903,36 @@ class BacktestEngine:
             out.loc[mask_actual_exit, "pnl_delta_vs_earliest_exit"] = float(delta_vs_earliest)
 
         return out
+
+    @staticmethod
+    def _mtm_rows_from_position(position: dict[str, Any] | None) -> list[dict[str, Any]]:
+        if not isinstance(position, dict):
+            return []
+        raw_entry_time = position.get("entry_time")
+        entry_ts = pd.to_datetime(raw_entry_time, errors="coerce")
+        if pd.isna(entry_ts):
+            return []
+        entry_date = pd.Timestamp(entry_ts).date().isoformat()
+        mtm_path = position.get("mtm_path", [])
+        if not isinstance(mtm_path, list) or not mtm_path:
+            return []
+
+        rows: list[dict[str, Any]] = []
+        total = len(mtm_path)
+        for idx, point in enumerate(mtm_path):
+            if not isinstance(point, dict):
+                continue
+            rows.append(
+                {
+                    "trade_id": entry_date,
+                    "entry_date": entry_date,
+                    "bar_date": str(point.get("bar_date")),
+                    "current_profit_pct": point.get("current_profit_pct"),
+                    "close_debit": point.get("close_debit"),
+                    "is_exit_bar": bool(idx == total - 1),
+                }
+            )
+        return rows
 
     @staticmethod
     def _mark_to_market(
